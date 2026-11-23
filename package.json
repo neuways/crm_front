@@ -1,0 +1,30 @@
+{
+  "name": "Neuways-crm-client",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "node --import=../server/node_modules/tsx/dist/loader.mjs --test tests/dashboard-data.test.ts tests/auth-flow.test.ts tests/enquiry-form.test.ts tests/employee-management.test.ts tests/workflow-diagram.test.ts tests/dedicated-workflow-page.test.ts tests/completed-deals-and-summary.test.ts tests/sidebar-navigation.test.ts tests/admin-dashboard.test.ts tests/lead-qualification-ui.test.ts tests/global-search-ui.test.ts tests/notification-ui.test.ts tests/lead-rejection-ui.test.ts tests/manager-dashboard-ui.test.ts tests/sales-dashboard-filters.test.ts tests/property-round-robin-ui.test.ts tests/sales-agent-properties-ui.test.ts tests/duplicate-data-ui.test.ts tests/bulk-upload-ui.test.ts tests/unassigned-leads-and-bulk-assign-ui.test.ts tests/task-status-tracking-ui.test.ts tests/meeting-site-visit-cancellation-ui.test.ts tests/rejected-deal-lost-ui.test.ts tests/do-not-contact-ui.test.ts"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.475.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.6",
+    "tailwind-merge": "^3.0.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.6.2",
+    "postcss": "^8.5.32",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0"
+  }
+}
