@@ -18,9 +18,20 @@
 
 import assert from 'node:assert';
 import { test } from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isValidMobileNumber, maskPhoneNumber } from '../src/utils/phone.js';
 import { enquiryService } from '../src/services/enquiry.service.js';
 import { CreateEnquiryInput } from '../src/types/enquiry.types.js';
+import {
+  PREFERRED_TIMING_OPTIONS,
+  OTHER_TIMING_OPTION,
+  matchPredefinedTiming,
+} from '../src/features/sales-dashboard/components/NewEnquiryModal.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // -----------------------------------------------------------------------------
 // Suite 1: Phone Validation & Privacy Masking
@@ -353,4 +364,123 @@ test('Budget Constraint: Minimum budget cannot exceed maximum budget', () => {
   assert.strictEqual(validateBudget(10000000, 5000000), false, 'Rejects min > max');
   assert.strictEqual(validateBudget(5000000, undefined), true);
   assert.strictEqual(validateBudget(undefined, 10000000), true);
+});
+
+// -----------------------------------------------------------------------------
+// Suite 3: Preferred Contact Timing Field (Dropdown & Manual Entry)
+// -----------------------------------------------------------------------------
+test('Preferred Timing: Predefined options and Other fallback defined correctly', () => {
+  const expectedOptions = [
+    'Morning (9 AM \u2013 12 PM)',
+    'Afternoon (12 PM \u2013 3 PM)',
+    'Evening (3 PM \u2013 6 PM)',
+    'Evening (6 PM \u2013 9 PM)',
+    'Anytime',
+  ];
+
+  assert.deepStrictEqual([...PREFERRED_TIMING_OPTIONS], expectedOptions);
+  assert.strictEqual(OTHER_TIMING_OPTION, 'Other (Enter Manually)');
+});
+
+test('Preferred Timing: Matches predefined options with hyphen or en-dash', () => {
+  // En-dash variants
+  assert.strictEqual(matchPredefinedTiming('Morning (9 AM \u2013 12 PM)'), 'Morning (9 AM \u2013 12 PM)');
+  assert.strictEqual(matchPredefinedTiming('Afternoon (12 PM \u2013 3 PM)'), 'Afternoon (12 PM \u2013 3 PM)');
+  assert.strictEqual(matchPredefinedTiming('Evening (3 PM \u2013 6 PM)'), 'Evening (3 PM \u2013 6 PM)');
+  assert.strictEqual(matchPredefinedTiming('Evening (6 PM \u2013 9 PM)'), 'Evening (6 PM \u2013 9 PM)');
+  assert.strictEqual(matchPredefinedTiming('Anytime'), 'Anytime');
+
+  // Hyphen variants (backwards compatibility with existing records)
+  assert.strictEqual(matchPredefinedTiming('Morning (9 AM - 12 PM)'), 'Morning (9 AM \u2013 12 PM)');
+  assert.strictEqual(matchPredefinedTiming('Afternoon (12 PM - 3 PM)'), 'Afternoon (12 PM \u2013 3 PM)');
+  assert.strictEqual(matchPredefinedTiming('Evening (3 PM - 6 PM)'), 'Evening (3 PM \u2013 6 PM)');
+  assert.strictEqual(matchPredefinedTiming('Evening (6 PM - 9 PM)'), 'Evening (6 PM \u2013 9 PM)');
+
+  // Case-insensitive matching
+  assert.strictEqual(matchPredefinedTiming('anytime'), 'Anytime');
+  assert.strictEqual(matchPredefinedTiming('ANYTIME'), 'Anytime');
+
+  // Custom manual timings return null (so they trigger "Other (Enter Manually)")
+  assert.strictEqual(matchPredefinedTiming('Weekdays 10 AM - 12 PM'), null);
+  assert.strictEqual(matchPredefinedTiming('After 7 PM'), null);
+  assert.strictEqual(matchPredefinedTiming('Only weekends'), null);
+  assert.strictEqual(matchPredefinedTiming(''), null);
+  assert.strictEqual(matchPredefinedTiming(null), null);
+  assert.strictEqual(matchPredefinedTiming(undefined), null);
+});
+
+test('Preferred Timing: NewEnquiryModal implements dropdown and conditional manual input', () => {
+  const modalPath = path.join(__dirname, '../src/features/sales-dashboard/components/NewEnquiryModal.tsx');
+  const content = fs.readFileSync(modalPath, 'utf-8');
+
+  // Preferred Contact Timing label & select element
+  assert.ok(content.includes('Preferred Contact Timing'), 'Renders Preferred Contact Timing label');
+  assert.ok(content.includes('id="enquiry-timing"'), 'Renders select element with id enquiry-timing');
+  assert.ok(content.includes('value={selectedTimingOption}'), 'Dropdown value bound to selectedTimingOption state');
+  assert.ok(content.includes('onChange={handleTimingSelectChange}'), 'Select triggers handleTimingSelectChange');
+
+  // Predefined options rendered in dropdown
+  assert.ok(content.includes('PREFERRED_TIMING_OPTIONS.map'), 'Maps over PREFERRED_TIMING_OPTIONS');
+  assert.ok(content.includes('OTHER_TIMING_OPTION'), 'Includes OTHER_TIMING_OPTION in select');
+
+  // Manual entry conditional input
+  assert.ok(content.includes('selectedTimingOption === OTHER_TIMING_OPTION'), 'Conditionally renders manual input when Other is selected');
+  assert.ok(content.includes('id="enquiry-timing-manual"'), 'Manual input has id enquiry-timing-manual');
+  assert.ok(content.includes('placeholder="Enter your preferred contact timing..."'), 'Manual input has exact required placeholder');
+  assert.ok(content.includes('value={manualTimingValue}'), 'Manual input bound to manualTimingValue state');
+  assert.ok(content.includes('onChange={handleManualTimingChange}'), 'Manual input updates state on change');
+
+  // Data handling preserves formData.preferredContactTiming
+  assert.ok(content.includes('handleFieldChange("preferredContactTiming"'), 'Updates formData.preferredContactTiming');
+  assert.ok(content.includes('preferredContactTiming: formData.preferredContactTiming.trim()'), 'Saves preferredContactTiming string in payload');
+});
+
+test('Preferred Timing: Shared enquiry modal covers Admin, Manager, and Sales Agent roles', () => {
+  const adminPagePath = path.join(__dirname, '../src/features/admin/AdminDashboardPage.tsx');
+  const managerPagePath = path.join(__dirname, '../src/features/manager/ManagerDashboardPage.tsx');
+  const salesPagePath = path.join(__dirname, '../src/features/sales-dashboard/SalesDashboardPage.tsx');
+  const modalPath = path.join(__dirname, '../src/features/sales-dashboard/components/NewEnquiryModal.tsx');
+
+  const adminContent = fs.readFileSync(adminPagePath, 'utf-8');
+  const managerContent = fs.readFileSync(managerPagePath, 'utf-8');
+  const salesContent = fs.readFileSync(salesPagePath, 'utf-8');
+  const modalContent = fs.readFileSync(modalPath, 'utf-8');
+
+  // Both Admin and Manager integrate the exact same NewEnquiryModal
+  assert.ok(adminContent.includes('NewEnquiryModal'), 'AdminDashboardPage imports and renders NewEnquiryModal');
+  assert.ok(managerContent.includes('NewEnquiryModal'), 'ManagerDashboardPage imports and renders NewEnquiryModal');
+  assert.ok(salesContent.includes('NewEnquiryModal'), 'SalesDashboardPage imports and renders NewEnquiryModal');
+
+  // Modal supports role-based routing for all three roles
+  assert.ok(modalContent.includes('role === "ADMIN"') || modalContent.includes("role === 'ADMIN'"), 'NewEnquiryModal handles ADMIN role');
+  assert.ok(modalContent.includes('role === "MANAGER"') || modalContent.includes("role === 'MANAGER'"), 'NewEnquiryModal handles MANAGER role');
+  assert.ok(modalContent.includes('role === "SALES"') || modalContent.includes("role === 'SALES'"), 'NewEnquiryModal handles SALES role');
+
+  // The timing field is positioned in common section (not role-isolated to SALES only)
+  const timingIndex = modalContent.indexOf('id="enquiry-timing"');
+  const roleSalesIndex = modalContent.indexOf('role === "SALES" && (');
+  assert.ok(timingIndex !== -1, 'Timing field exists');
+  assert.ok(timingIndex < roleSalesIndex, 'Timing field is in common section available to Admin, Manager, and Sales Agent');
+});
+
+test('Preferred Timing: Editing an enquiry correctly initializes and preserves saved timing', () => {
+  const modalPath = path.join(__dirname, '../src/features/sales-dashboard/components/NewEnquiryModal.tsx');
+  const modalContent = fs.readFileSync(modalPath, 'utf-8');
+
+  // NewEnquiryModal accepts initialData prop for editing existing enquiries
+  assert.ok(modalContent.includes('initialData?:'), 'NewEnquiryModalProps defines initialData prop');
+  assert.ok(modalContent.includes('initialData.preferredContactTiming'), 'Synchronizes initialData timing');
+
+  // Test resolution logic for editing:
+  // 1. Predefined timing in existing record
+  const editPredefined = matchPredefinedTiming('Afternoon (12 PM \u2013 3 PM)');
+  assert.strictEqual(editPredefined, 'Afternoon (12 PM \u2013 3 PM)');
+
+  // 2. Hyphenated predefined timing in legacy existing record
+  const editLegacy = matchPredefinedTiming('Evening (6 PM - 9 PM)');
+  assert.strictEqual(editLegacy, 'Evening (6 PM \u2013 9 PM)');
+
+  // 3. Custom timing in existing record
+  const editCustom = matchPredefinedTiming('Tuesdays after 6:00 PM');
+  assert.strictEqual(editCustom, null, 'Custom timing returns null to activate Other manual input');
 });

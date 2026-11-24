@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import Swal from 'sweetalert2';
 import {
   PhoneCall,
   MessageSquare,
@@ -139,6 +140,49 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const showWarningPopup = useCallback((message: string, elementId?: string) => {
+    Swal.fire({
+      icon: 'warning',
+      title: 'Required Field Missing',
+      text: message,
+      confirmButtonText: 'Got it',
+      confirmButtonColor: '#2563eb',
+      didClose: () => {
+        if (elementId) {
+          const el = document.getElementById(elementId);
+          el?.focus();
+          el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      },
+    }).then(() => {
+      if (elementId) {
+        const el = document.getElementById(elementId);
+        el?.focus();
+        el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
+  }, []);
+
+  const showSuccessPopup = useCallback((message: string) => {
+    return Swal.fire({
+      icon: 'success',
+      title: 'Success!',
+      text: message,
+      confirmButtonText: 'OK',
+      confirmButtonColor: '#2563eb',
+    });
+  }, []);
+
+  const showErrorPopup = useCallback((message: string) => {
+    return Swal.fire({
+      icon: 'error',
+      title: 'Error',
+      text: message,
+      confirmButtonText: 'OK',
+      confirmButtonColor: '#2563eb',
+    });
+  }, []);
 
   // Re-fetch lead details and prefill data when modal opens
   useEffect(() => {
@@ -297,6 +341,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
     const reason = cancelReasonInput.trim();
     if (!reason) {
       setCancelModalError('Cancellation reason is mandatory and cannot be empty.');
+      showWarningPopup('Cancellation reason is mandatory and cannot be empty.', 'modal-cancel-reason');
       return;
     }
     if (!lead) return;
@@ -313,23 +358,27 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
       }
 
       if (!res.success) {
-        setCancelModalError(res.message || 'Failed to cancel plan.');
+        const errorMsg = res.message || 'Failed to cancel plan.';
+        setCancelModalError(errorMsg);
+        showErrorPopup(errorMsg);
         setIsCancellingPlan(false);
         return;
       }
 
-      setSuccessMessage(
+      setCancelModalState({ isOpen: false, type: 'MEETING' });
+      setIsReschedulingMeeting(false);
+      setIsReschedulingSiteVisit(false);
+      showSuccessPopup(
         cancelModalState.type === 'MEETING'
           ? 'Meeting plan cancelled successfully.'
           : 'Site visit plan cancelled successfully.'
       );
-      setCancelModalState({ isOpen: false, type: 'MEETING' });
-      setIsReschedulingMeeting(false);
-      setIsReschedulingSiteVisit(false);
       await loadAllLeadData(lead.id);
       if (onFollowUpLogged) onFollowUpLogged();
     } catch (err: any) {
-      setCancelModalError(err?.message || 'A network error occurred while cancelling the plan.');
+      const errorMsg = err?.message || 'A network error occurred while cancelling the plan.';
+      setCancelModalError(errorMsg);
+      showErrorPopup(errorMsg);
     } finally {
       setIsCancellingPlan(false);
     }
@@ -349,16 +398,16 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
     // Validation for Step 1
     if (activeStep === 1) {
       if (!notes.trim()) {
-        setErrorMessage('Follow-up remark/notes cannot be empty.');
+        showWarningPopup('Follow-up remark/notes cannot be empty.', 'modal-follow-up-notes');
         return;
       }
       if (outcome === 'CALL_BACK_REQUESTED') {
         if (!nextFollowUpDate.trim()) {
-          setErrorMessage('Next follow-up date is required when outcome is Call Back Requested.');
+          showWarningPopup('Next follow-up date is required when outcome is Call Back Requested.', 'modal-next-follow-up-date');
           return;
         }
         if (!nextFollowUpTime.trim()) {
-          setErrorMessage('Next follow-up time is required when outcome is Call Back Requested.');
+          showWarningPopup('Next follow-up time is required when outcome is Call Back Requested.', 'modal-next-follow-up-time');
           return;
         }
       }
@@ -367,23 +416,23 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
     // Validation for Step 2
     if (activeStep === 2) {
       if (!meetingPlace.trim()) {
-        setErrorMessage('Meeting place/address is required.');
+        showWarningPopup('Meeting place/address is required.', 'modal-meeting-place');
         return;
       }
       if (!meetingDate.trim()) {
-        setErrorMessage('Meeting date is required.');
+        showWarningPopup('Meeting date is required.', 'modal-meeting-date');
         return;
       }
       if (!meetingTime.trim()) {
-        setErrorMessage('Meeting time is required.');
+        showWarningPopup('Meeting time is required.', 'modal-meeting-time');
         return;
       }
       if (!meetingProject.trim()) {
-        setErrorMessage('Project details are required.');
+        showWarningPopup('Project details are required.', 'modal-meeting-project');
         return;
       }
       if (advance && !isMeetingCompleted) {
-        setErrorMessage('Meeting must be marked completed before proceeding to Site Visit Plan.');
+        showWarningPopup('Meeting must be marked completed before proceeding to Site Visit Plan.', 'meeting-completed');
         return;
       }
     }
@@ -391,23 +440,23 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
     // Validation for Step 3
     if (activeStep === 3) {
       if (!siteVisitAddress.trim()) {
-        setErrorMessage('Site visit address/location is required.');
+        showWarningPopup('Site visit address/location is required.', 'modal-site-visit-address');
         return;
       }
       if (!siteVisitDate.trim()) {
-        setErrorMessage('Site visit date is required.');
+        showWarningPopup('Site visit date is required.', 'modal-site-visit-date');
         return;
       }
       if (!siteVisitTime.trim()) {
-        setErrorMessage('Site visit time is required.');
+        showWarningPopup('Site visit time is required.', 'modal-site-visit-time');
         return;
       }
       if (!siteVisitProject.trim()) {
-        setErrorMessage('Project name is required.');
+        showWarningPopup('Project name is required.', 'modal-site-visit-project');
         return;
       }
       if (advance && !isSiteVisitCompleted) {
-        setErrorMessage('Site visit must be marked completed before proceeding to Deal Done.');
+        showWarningPopup('Site visit must be marked completed before proceeding to Deal Done.', 'sitevisit-completed');
         return;
       }
     }
@@ -415,31 +464,31 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
     // Validation for Step 4
     if (activeStep === 4) {
       if (!dealProject.trim()) {
-        setErrorMessage('Project name is required for Deal Done.');
+        showWarningPopup('Project name is required for Deal Done.', 'modal-deal-project');
         return;
       }
       if (!propertyType.trim()) {
-        setErrorMessage('Property type is required.');
+        showWarningPopup('Property type is required.', 'modal-deal-property-type');
         return;
       }
       const numPrice = parseFloat(dealPrice);
       if (isNaN(numPrice) || numPrice <= 0) {
-        setErrorMessage('Please enter a valid positive deal price.');
+        showWarningPopup('Please enter a valid positive deal price.', 'modal-deal-price');
         return;
       }
       if (!dealSize.trim()) {
-        setErrorMessage('Property size is required (e.g. 1850 sq ft or 3 BHK).');
+        showWarningPopup('Property size is required (e.g. 1850 sq ft or 3 BHK).', 'modal-deal-size');
         return;
       }
       if (!isDealConfirmed) {
-        setErrorMessage('Explicit agent confirmation is required to finalize Deal Done.');
+        showWarningPopup('Explicit agent confirmation is required to finalize Deal Done.', 'deal-confirmed');
         return;
       }
     }
 
     // Status validation
     if (leadStatus === 'CLOSED' && !closingReason.trim()) {
-      setErrorMessage('A closing reason is mandatory when setting lead status to CLOSED.');
+      showWarningPopup('A closing reason is mandatory when setting lead status to CLOSED.', 'modal-closing-reason');
       return;
     }
 
@@ -509,7 +558,9 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
       const res = await enquiryService.saveWorkflowStep(lead.id, payload);
 
       if (!res.success) {
-        setErrorMessage(res.message || res.error || 'Failed to save workflow step.');
+        const errorMsg = res.message || res.error || 'Failed to save workflow step.';
+        setErrorMessage(errorMsg);
+        showErrorPopup(errorMsg);
         setIsSubmitting(false);
         return;
       }
@@ -520,12 +571,34 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
           : `Step ${activeStep} details saved successfully.`
       );
 
+      // SweetAlert2 success notification across all 4 workflow stages
+      let successMsg = `Step ${activeStep} details saved successfully.`;
+      if (activeStep === 1) {
+        successMsg = advance
+          ? 'Follow-up saved and advanced to Meeting Plan successfully.'
+          : 'Follow-up saved successfully.';
+      } else if (activeStep === 2) {
+        successMsg = advance
+          ? 'Meeting Plan saved and advanced to Site Visit Plan successfully.'
+          : 'Meeting Plan details saved successfully.';
+      } else if (activeStep === 3) {
+        successMsg = advance
+          ? 'Site Visit Plan saved and advanced to Deal Done successfully.'
+          : 'Site Visit Plan details saved successfully.';
+      } else if (activeStep === 4) {
+        successMsg = 'Deal finalized and saved successfully.';
+      }
+
+      showSuccessPopup(successMsg);
+
       // Refresh local modal data and parent dashboard
       // Note: loadAllLeadData automatically syncs activeStep with the updated currentStage from the backend
       await loadAllLeadData(lead.id);
       onFollowUpLogged();
     } catch (err: unknown) {
-      setErrorMessage(err instanceof Error ? err.message : 'A network error occurred.');
+      const errorMsg = err instanceof Error ? err.message : 'A network error occurred.';
+      setErrorMessage(errorMsg);
+      showErrorPopup(errorMsg);
     } finally {
       setIsSubmitting(false);
     }
@@ -1051,6 +1124,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                             Next Follow-Up Date <span className="text-red-500">*</span>
                           </label>
                           <input
+                            id="modal-next-follow-up-date"
                             type="date"
                             value={nextFollowUpDate}
                             onChange={(e) => setNextFollowUpDate(e.target.value)}
@@ -1063,6 +1137,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                             Next Follow-Up Time <span className="text-red-500">*</span>
                           </label>
                           <input
+                            id="modal-next-follow-up-time"
                             type="time"
                             value={nextFollowUpTime}
                             onChange={(e) => setNextFollowUpTime(e.target.value)}
@@ -1080,6 +1155,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                       Conversation Remark / Notes <span className="text-red-500">*</span>
                     </label>
                     <textarea
+                      id="modal-follow-up-notes"
                       value={notes}
                       onChange={(e) => setNotes(e.target.value)}
                       rows={3}
@@ -1167,6 +1243,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                             Meeting Place / Address <span className="text-red-500">*</span>
                           </label>
                           <input
+                            id="modal-meeting-place"
                             type="text"
                             value={meetingPlace}
                             onChange={(e) => setMeetingPlace(e.target.value)}
@@ -1181,6 +1258,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                             Project Details <span className="text-red-500">*</span>
                           </label>
                           <input
+                            id="modal-meeting-project"
                             type="text"
                             value={meetingProject}
                             onChange={(e) => setMeetingProject(e.target.value)}
@@ -1197,6 +1275,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                             Meeting Date <span className="text-red-500">*</span>
                           </label>
                           <input
+                            id="modal-meeting-date"
                             type="date"
                             value={meetingDate}
                             onChange={(e) => setMeetingDate(e.target.value)}
@@ -1210,6 +1289,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                             Meeting Time <span className="text-red-500">*</span>
                           </label>
                           <input
+                            id="modal-meeting-time"
                             type="time"
                             value={meetingTime}
                             onChange={(e) => setMeetingTime(e.target.value)}
@@ -1245,6 +1325,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                             Meeting Remarks / Agenda
                           </label>
                           <textarea
+                            id="modal-meeting-remarks"
                             value={meetingRemarks}
                             onChange={(e) => setMeetingRemarks(e.target.value)}
                             rows={2}
@@ -1258,6 +1339,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                             Meeting Result / Outcome
                           </label>
                           <textarea
+                            id="modal-meeting-result"
                             value={meetingResult}
                             onChange={(e) => setMeetingResult(e.target.value)}
                             rows={2}
@@ -1380,6 +1462,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                             Site Visit Address / Location <span className="text-red-500">*</span>
                           </label>
                           <input
+                            id="modal-site-visit-address"
                             type="text"
                             value={siteVisitAddress}
                             onChange={(e) => setSiteVisitAddress(e.target.value)}
@@ -1394,6 +1477,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                             Project Name <span className="text-red-500">*</span>
                           </label>
                           <input
+                            id="modal-site-visit-project"
                             type="text"
                             value={siteVisitProject}
                             onChange={(e) => setSiteVisitProject(e.target.value)}
@@ -1410,6 +1494,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                             Site Visit Date <span className="text-red-500">*</span>
                           </label>
                           <input
+                            id="modal-site-visit-date"
                             type="date"
                             value={siteVisitDate}
                             onChange={(e) => setSiteVisitDate(e.target.value)}
@@ -1423,6 +1508,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                             Site Visit Time <span className="text-red-500">*</span>
                           </label>
                           <input
+                            id="modal-site-visit-time"
                             type="time"
                             value={siteVisitTime}
                             onChange={(e) => setSiteVisitTime(e.target.value)}
@@ -1458,6 +1544,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                             Visit Remarks
                           </label>
                           <textarea
+                            id="modal-site-visit-remarks"
                             value={siteVisitRemarks}
                             onChange={(e) => setSiteVisitRemarks(e.target.value)}
                             rows={2}
@@ -1471,6 +1558,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                             Visit Outcome / Client Feedback
                           </label>
                           <textarea
+                            id="modal-site-visit-outcome"
                             value={siteVisitOutcome}
                             onChange={(e) => setSiteVisitOutcome(e.target.value)}
                             rows={2}
@@ -1538,6 +1626,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                         Final Project <span className="text-red-500">*</span>
                       </label>
                       <input
+                        id="modal-deal-project"
                         type="text"
                         value={dealProject}
                         onChange={(e) => setDealProject(e.target.value)}
@@ -1552,6 +1641,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                         Property Type <span className="text-red-500">*</span>
                       </label>
                       <select
+                        id="modal-deal-property-type"
                         value={propertyType}
                         onChange={(e) => setPropertyType(e.target.value)}
                         className="w-full p-2 bg-surface-card border border-edge rounded-lg text-xs text-content-primary"
@@ -1573,6 +1663,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                       </label>
                       <div className="relative">
                         <input
+                          id="modal-deal-price"
                           type="number"
                           value={dealPrice}
                           onChange={(e) => setDealPrice(e.target.value)}
@@ -1589,6 +1680,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                         Unit Size / Configuration <span className="text-red-500">*</span>
                       </label>
                       <input
+                        id="modal-deal-size"
                         type="text"
                         value={dealSize}
                         onChange={(e) => setDealSize(e.target.value)}
@@ -1604,6 +1696,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                       Deal Remarks / Payment Plan Notes
                     </label>
                     <textarea
+                      id="modal-deal-remarks"
                       value={dealRemarks}
                       onChange={(e) => setDealRemarks(e.target.value)}
                       rows={2}
@@ -1656,6 +1749,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                       Closing Reason <span className="text-red-500">*</span>
                     </label>
                     <input
+                      id="modal-closing-reason"
                       type="text"
                       value={closingReason}
                       onChange={(e) => setClosingReason(e.target.value)}
@@ -1786,6 +1880,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                   Cancellation Reason <span className="text-rose-500">*</span>
                 </label>
                 <textarea
+                  id="modal-cancel-reason"
                   rows={3}
                   value={cancelReasonInput}
                   onChange={(e) => {

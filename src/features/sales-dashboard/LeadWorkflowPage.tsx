@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -30,6 +30,7 @@ import {
 import { Button } from '../../components/ui/Button.js';
 import { enquiryService } from '../../services/enquiry.service.js';
 import { useAuth } from '../../context/AuthContext.js';
+import Swal from 'sweetalert2';
 import {
   IEnquiry,
   ActiveManagerSummary,
@@ -89,6 +90,7 @@ export const LeadWorkflowPage: React.FC = () => {
   });
   const [nextFollowUpTime, setNextFollowUpTime] = useState<string>('10:00');
   const [notes, setNotes] = useState<string>('');
+  const discussionNotesRef = useRef<HTMLTextAreaElement>(null);
   const [enquiryProjectName, setEnquiryProjectName] = useState<string>('');
   const [enquiryPreferredLocation, setEnquiryPreferredLocation] = useState<string>('');
   const [enquiryRequirement, setEnquiryRequirement] = useState<string>('');
@@ -218,6 +220,49 @@ export const LeadWorkflowPage: React.FC = () => {
     setTaskStatusError(null);
     setTaskStatusSuccess(null);
   };
+
+  const showWarningPopup = useCallback((message: string, elementId?: string) => {
+    Swal.fire({
+      icon: 'warning',
+      title: 'Required Field Missing',
+      text: message,
+      confirmButtonText: 'Got it',
+      confirmButtonColor: '#2563eb',
+      didClose: () => {
+        if (elementId) {
+          const el = document.getElementById(elementId);
+          el?.focus();
+          el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      },
+    }).then(() => {
+      if (elementId) {
+        const el = document.getElementById(elementId);
+        el?.focus();
+        el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
+  }, []);
+
+  const showSuccessPopup = useCallback((message: string) => {
+    return Swal.fire({
+      icon: 'success',
+      title: 'Success!',
+      text: message,
+      confirmButtonText: 'OK',
+      confirmButtonColor: '#2563eb',
+    });
+  }, []);
+
+  const showErrorPopup = useCallback((message: string) => {
+    return Swal.fire({
+      icon: 'error',
+      title: 'Error',
+      text: message,
+      confirmButtonText: 'OK',
+      confirmButtonColor: '#2563eb',
+    });
+  }, []);
 
   const handleUpdateTaskStatusSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -466,6 +511,7 @@ export const LeadWorkflowPage: React.FC = () => {
     const reason = cancelReasonInput.trim();
     if (!reason) {
       setCancelModalError('Cancellation reason is mandatory and cannot be empty.');
+      showWarningPopup('Cancellation reason is mandatory and cannot be empty.', 'cancel-plan-reason');
       return;
     }
 
@@ -483,22 +529,26 @@ export const LeadWorkflowPage: React.FC = () => {
       }
 
       if (!res.success) {
-        setCancelModalError(res.message || 'Failed to cancel plan.');
+        const errorMsg = res.message || 'Failed to cancel plan.';
+        setCancelModalError(errorMsg);
+        showErrorPopup(errorMsg);
         setIsCancellingPlan(false);
         return;
       }
 
-      setSuccessMessage(
+      setCancelModalState({ isOpen: false, type: 'MEETING' });
+      setIsReschedulingMeeting(false);
+      setIsReschedulingSiteVisit(false);
+      showSuccessPopup(
         cancelModalState.type === 'MEETING'
           ? 'Meeting plan cancelled successfully.'
           : 'Site visit plan cancelled successfully.'
       );
-      setCancelModalState({ isOpen: false, type: 'MEETING' });
-      setIsReschedulingMeeting(false);
-      setIsReschedulingSiteVisit(false);
       await loadLeadData(false);
     } catch (err: any) {
-      setCancelModalError(err?.message || 'A network error occurred while cancelling the plan.');
+      const errorMsg = err?.message || 'A network error occurred while cancelling the plan.';
+      setCancelModalError(errorMsg);
+      showErrorPopup(errorMsg);
     } finally {
       setIsCancellingPlan(false);
     }
@@ -516,13 +566,13 @@ export const LeadWorkflowPage: React.FC = () => {
     if (!lead || !leadId || isSaving) return;
 
     if (isRejectedLead || lead.status === 'CLOSED') {
-      setError('Cannot update workflow or finalize Deal Done on a closed or rejected lead.');
+      showWarningPopup('Cannot update workflow or finalize Deal Done on a closed or rejected lead.');
       return;
     }
 
     // REQ-38: Block customer contact actions if Do Not Contact is active
     if (lead.isDoNotContact && activeStep <= 3) {
-      setError('Customer has requested Do Not Contact. Customer communication and scheduling actions are prohibited.');
+      showWarningPopup('Customer has requested Do Not Contact. Customer communication and scheduling actions are prohibited.');
       return;
     }
 
@@ -532,89 +582,89 @@ export const LeadWorkflowPage: React.FC = () => {
     // Frontend validations
     if (activeStep === 1) {
       if (!notes.trim()) {
-        setError('Follow-up remarks/notes cannot be empty.');
+        showWarningPopup('Follow-up remarks/notes cannot be empty.', 'follow-up-discussion-notes');
         return;
       }
       if (outcome === 'CALL_BACK_REQUESTED') {
         if (!nextFollowUpDate.trim()) {
-          setError('Next follow-up date is required when outcome is Call Back Requested.');
+          showWarningPopup('Next follow-up date is required when outcome is Call Back Requested.', 'next-follow-up-date');
           return;
         }
         if (!nextFollowUpTime.trim()) {
-          setError('Next follow-up time is required when outcome is Call Back Requested.');
+          showWarningPopup('Next follow-up time is required when outcome is Call Back Requested.', 'next-follow-up-time');
           return;
         }
       }
     } else if (activeStep === 2) {
       if (!meetingPlace.trim()) {
-        setError('Meeting place/address is required.');
+        showWarningPopup('Meeting place/address is required.', 'meeting-place');
         return;
       }
       if (!meetingDate.trim()) {
-        setError('Meeting date is required.');
+        showWarningPopup('Meeting date is required.', 'meeting-date');
         return;
       }
       if (!meetingTime.trim()) {
-        setError('Meeting time is required.');
+        showWarningPopup('Meeting time is required.', 'meeting-time');
         return;
       }
       if (!meetingProject.trim()) {
-        setError('Project details are required for the meeting.');
+        showWarningPopup('Project details are required for the meeting.', 'meeting-project');
         return;
       }
       if (isMeetingCompleted && !meetingResult.trim() && !meetingRemarks.trim()) {
-        setError('Please record meeting result or remarks when marking meeting complete.');
+        showWarningPopup('Please record meeting result or remarks when marking meeting complete.', 'meeting-result');
         return;
       }
       if (advance && !isMeetingCompleted) {
-        setError('Meeting must be explicitly marked completed before advancing to Site Visit Plan.');
+        showWarningPopup('Meeting must be explicitly marked completed before advancing to Site Visit Plan.', 'meeting-is-completed');
         return;
       }
     } else if (activeStep === 3) {
       if (!siteVisitAddress.trim()) {
-        setError('Site visit address/location is required.');
+        showWarningPopup('Site visit address/location is required.', 'site-visit-address');
         return;
       }
       if (!siteVisitDate.trim()) {
-        setError('Site visit date is required.');
+        showWarningPopup('Site visit date is required.', 'site-visit-date');
         return;
       }
       if (!siteVisitTime.trim()) {
-        setError('Site visit time is required.');
+        showWarningPopup('Site visit time is required.', 'site-visit-time');
         return;
       }
       if (!siteVisitProject.trim()) {
-        setError('Project name is required for the site visit.');
+        showWarningPopup('Project name is required for the site visit.', 'site-visit-project');
         return;
       }
       if (isSiteVisitCompleted && !siteVisitOutcome.trim() && !siteVisitRemarks.trim()) {
-        setError('Please record visit outcome or remarks when marking site visit complete.');
+        showWarningPopup('Please record visit outcome or remarks when marking site visit complete.', 'site-visit-outcome');
         return;
       }
       if (advance && !isSiteVisitCompleted) {
-        setError('Site visit must be explicitly marked completed before advancing to Deal Done.');
+        showWarningPopup('Site visit must be explicitly marked completed before advancing to Deal Done.', 'site-visit-is-completed');
         return;
       }
     } else if (activeStep === 4) {
       if (!dealProject.trim()) {
-        setError('Project name is required for Deal Done.');
+        showWarningPopup('Project name is required for Deal Done.', 'deal-project');
         return;
       }
       if (!propertyType.trim()) {
-        setError('Property type is required for Deal Done.');
+        showWarningPopup('Property type is required for Deal Done.', 'deal-property-type');
         return;
       }
       const priceNum = Number(dealPrice);
       if (!dealPrice.trim() || isNaN(priceNum) || priceNum <= 0) {
-        setError('A valid positive deal price is required.');
+        showWarningPopup('A valid positive deal price is required.', 'deal-price');
         return;
       }
       if (!dealSize.trim()) {
-        setError('Property size is required (e.g., 1850 sqft).');
+        showWarningPopup('Property size is required (e.g., 1850 sqft).', 'deal-size');
         return;
       }
       if (!isDealConfirmed) {
-        setError('Please check the confirmation box to verify this finalized deal.');
+        showWarningPopup('Please check the confirmation box to verify this finalized deal.', 'deal-confirmed');
         return;
       }
     }
@@ -698,7 +748,7 @@ export const LeadWorkflowPage: React.FC = () => {
       const res = await enquiryService.saveWorkflowStep(leadId, payload);
 
       if (!res.success) {
-        setError(res.message || 'Failed to save workflow step.');
+        showErrorPopup(res.message || 'Failed to save workflow step.');
         setIsSaving(false);
         return;
       }
@@ -708,6 +758,26 @@ export const LeadWorkflowPage: React.FC = () => {
           ? `Step ${activeStep} saved successfully! Advanced to Step ${Math.min(activeStep + 1, 4)}.`
           : `Step ${activeStep} details saved successfully.`
       );
+
+      // SweetAlert2 success notification across all 4 workflow stages
+      let successMsg = `Step ${activeStep} details saved successfully.`;
+      if (activeStep === 1) {
+        successMsg = advance
+          ? 'Follow-up saved and advanced to Meeting Plan successfully.'
+          : 'Follow-up saved successfully.';
+      } else if (activeStep === 2) {
+        successMsg = advance
+          ? 'Meeting Plan saved and advanced to Site Visit Plan successfully.'
+          : 'Meeting Plan details saved successfully.';
+      } else if (activeStep === 3) {
+        successMsg = advance
+          ? 'Site Visit Plan saved and advanced to Deal Done successfully.'
+          : 'Site Visit Plan details saved successfully.';
+      } else if (activeStep === 4) {
+        successMsg = 'Deal finalized and saved successfully.';
+      }
+
+      showSuccessPopup(successMsg);
 
       // Trigger deal confirmation modal on Step 4 completion
       if (activeStep === 4) {
@@ -722,7 +792,7 @@ export const LeadWorkflowPage: React.FC = () => {
       // Reload lead data from backend: this updates lead, history, and currentStage cleanly
       await loadLeadData(false);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'A network error occurred while saving.');
+      showErrorPopup(err instanceof Error ? err.message : 'A network error occurred while saving.');
     } finally {
       setIsSaving(false);
     }
@@ -736,6 +806,7 @@ export const LeadWorkflowPage: React.FC = () => {
 
     if (!closingReason.trim()) {
       setCloseError('Please provide a mandatory reason for closing this enquiry.');
+      showWarningPopup('Please provide a mandatory reason for closing this enquiry.', 'close-reason');
       return;
     }
 
@@ -749,16 +820,20 @@ export const LeadWorkflowPage: React.FC = () => {
       });
 
       if (!res.success) {
-        setCloseError(res.message || 'Failed to close lead.');
+        const errorMsg = res.message || 'Failed to close lead.';
+        setCloseError(errorMsg);
+        showErrorPopup(errorMsg);
         setIsSaving(false);
         return;
       }
 
       setIsCloseDialogOpen(false);
-      setSuccessMessage('Lead has been successfully marked as CLOSED.');
+      showSuccessPopup('Lead has been successfully marked as CLOSED.');
       await loadLeadData(false);
     } catch (err: unknown) {
-      setCloseError(err instanceof Error ? err.message : 'Failed to update lead status.');
+      const errorMsg = err instanceof Error ? err.message : 'Failed to update lead status.';
+      setCloseError(errorMsg);
+      showErrorPopup(errorMsg);
     } finally {
       setIsSaving(false);
     }
@@ -769,16 +844,19 @@ export const LeadWorkflowPage: React.FC = () => {
 
     if (!rejectionReason) {
       setRejectError('Please select a rejection reason.');
+      showWarningPopup('Please select a rejection reason.', 'reject-reason');
       return;
     }
 
     if (!rejectionRemarks.trim()) {
       setRejectError('Mandatory remarks are required when closing a lead as rejected.');
+      showWarningPopup('Mandatory remarks are required when closing a lead as rejected.', 'reject-remarks');
       return;
     }
 
     if (!isRejectionConfirmed) {
       setRejectError('Please confirm the rejection before final submission.');
+      showWarningPopup('Please confirm the rejection before final submission.', 'reject-confirmed');
       return;
     }
 
@@ -792,17 +870,21 @@ export const LeadWorkflowPage: React.FC = () => {
       });
 
       if (!res.success) {
-        setRejectError(res.message || 'Failed to reject lead.');
+        const errorMsg = res.message || 'Failed to reject lead.';
+        setRejectError(errorMsg);
+        showErrorPopup(errorMsg);
         setIsSaving(false);
         return;
       }
 
       setIsRejectDialogOpen(false);
-      setSuccessMessage(`Lead "${lead.name}" has been marked as Rejected / Lost.`);
+      showSuccessPopup(`Lead "${lead.name}" has been marked as Rejected / Lost.`);
       window.dispatchEvent(new CustomEvent('crm:notification-refresh'));
       await loadLeadData(false);
     } catch (err: unknown) {
-      setRejectError(err instanceof Error ? err.message : 'Failed to reject lead.');
+      const errorMsg = err instanceof Error ? err.message : 'Failed to reject lead.';
+      setRejectError(errorMsg);
+      showErrorPopup(errorMsg);
     } finally {
       setIsSaving(false);
     }
@@ -813,16 +895,19 @@ export const LeadWorkflowPage: React.FC = () => {
 
     if (!dealLostReason) {
       setDealLostError('Please select a deal lost reason.');
+      showWarningPopup('Please select a deal lost reason.', 'deal-lost-reason');
       return;
     }
 
     if (!dealLostRemarks.trim()) {
       setDealLostError('Mandatory remarks are required when marking a deal as lost.');
+      showWarningPopup('Mandatory remarks are required when marking a deal as lost.', 'deal-lost-remarks');
       return;
     }
 
     if (!isDealLostConfirmed) {
       setDealLostError('Please confirm the deal lost action before final submission.');
+      showWarningPopup('Please confirm the deal lost action before final submission.', 'deal-lost-confirmed');
       return;
     }
 
@@ -836,17 +921,21 @@ export const LeadWorkflowPage: React.FC = () => {
       });
 
       if (!res.success) {
-        setDealLostError(res.message || 'Failed to mark deal as lost.');
+        const errorMsg = res.message || 'Failed to mark deal as lost.';
+        setDealLostError(errorMsg);
+        showErrorPopup(errorMsg);
         setIsSaving(false);
         return;
       }
 
       setIsDealLostDialogOpen(false);
-      setSuccessMessage(`Opportunity "${lead.name}" has been marked as Deal Lost.`);
+      showSuccessPopup(`Opportunity "${lead.name}" has been marked as Deal Lost.`);
       window.dispatchEvent(new CustomEvent('crm:notification-refresh'));
       await loadLeadData(false);
     } catch (err: unknown) {
-      setDealLostError(err instanceof Error ? err.message : 'Failed to mark deal as lost.');
+      const errorMsg = err instanceof Error ? err.message : 'Failed to mark deal as lost.';
+      setDealLostError(errorMsg);
+      showErrorPopup(errorMsg);
     } finally {
       setIsSaving(false);
     }
@@ -1822,6 +1911,7 @@ export const LeadWorkflowPage: React.FC = () => {
                       Next Follow-Up Date {outcome === 'CALL_BACK_REQUESTED' ? '*' : '(Optional)'}
                     </label>
                     <input
+                      id="next-follow-up-date"
                       type="date"
                       value={nextFollowUpDate}
                       onChange={(e) => setNextFollowUpDate(e.target.value)}
@@ -1837,6 +1927,7 @@ export const LeadWorkflowPage: React.FC = () => {
                       Next Follow-Up Time {outcome === 'CALL_BACK_REQUESTED' ? '*' : '(Optional)'}
                     </label>
                     <input
+                      id="next-follow-up-time"
                       type="time"
                       value={nextFollowUpTime}
                       onChange={(e) => setNextFollowUpTime(e.target.value)}
@@ -1856,6 +1947,8 @@ export const LeadWorkflowPage: React.FC = () => {
                   Discussion Notes & Remarks * (Do not enter passwords or OTPs)
                 </label>
                 <textarea
+                  ref={discussionNotesRef}
+                  id="follow-up-discussion-notes"
                   rows={3}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
@@ -2193,6 +2286,7 @@ export const LeadWorkflowPage: React.FC = () => {
                         Meeting Place / Address *
                       </label>
                       <input
+                        id="meeting-place"
                         type="text"
                         value={meetingPlace}
                         onChange={(e) => setMeetingPlace(e.target.value)}
@@ -2226,6 +2320,7 @@ export const LeadWorkflowPage: React.FC = () => {
                         Meeting Date *
                       </label>
                       <input
+                        id="meeting-date"
                         type="date"
                         value={meetingDate}
                         onChange={(e) => setMeetingDate(e.target.value)}
@@ -2239,6 +2334,7 @@ export const LeadWorkflowPage: React.FC = () => {
                         Meeting Time *
                       </label>
                       <input
+                        id="meeting-time"
                         type="time"
                         value={meetingTime}
                         onChange={(e) => setMeetingTime(e.target.value)}
@@ -2252,6 +2348,7 @@ export const LeadWorkflowPage: React.FC = () => {
                         Project Details *
                       </label>
                       <input
+                        id="meeting-project"
                         type="text"
                         value={meetingProject}
                         onChange={(e) => setMeetingProject(e.target.value)}
@@ -2267,6 +2364,7 @@ export const LeadWorkflowPage: React.FC = () => {
                       Meeting Agenda / Prep Remarks
                     </label>
                     <textarea
+                      id="meeting-remarks"
                       rows={2}
                       value={meetingRemarks}
                       onChange={(e) => setMeetingRemarks(e.target.value)}
@@ -2279,6 +2377,7 @@ export const LeadWorkflowPage: React.FC = () => {
                   <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
                     <label className="flex items-start gap-2.5 cursor-pointer">
                       <input
+                        id="meeting-is-completed"
                         type="checkbox"
                         checked={isMeetingCompleted}
                         onChange={(e) => setIsMeetingCompleted(e.target.checked)}
@@ -2301,6 +2400,7 @@ export const LeadWorkflowPage: React.FC = () => {
                           Meeting Result / Outcome Summary *
                         </label>
                         <input
+                          id="meeting-result"
                           type="text"
                           value={meetingResult}
                           onChange={(e) => setMeetingResult(e.target.value)}
@@ -2477,6 +2577,7 @@ export const LeadWorkflowPage: React.FC = () => {
                         Site Visit Address / Property Location *
                       </label>
                       <input
+                        id="site-visit-address"
                         type="text"
                         value={siteVisitAddress}
                         onChange={(e) => setSiteVisitAddress(e.target.value)}
@@ -2510,6 +2611,7 @@ export const LeadWorkflowPage: React.FC = () => {
                         Visit Date *
                       </label>
                       <input
+                        id="site-visit-date"
                         type="date"
                         value={siteVisitDate}
                         onChange={(e) => setSiteVisitDate(e.target.value)}
@@ -2523,6 +2625,7 @@ export const LeadWorkflowPage: React.FC = () => {
                         Visit Time *
                       </label>
                       <input
+                        id="site-visit-time"
                         type="time"
                         value={siteVisitTime}
                         onChange={(e) => setSiteVisitTime(e.target.value)}
@@ -2536,6 +2639,7 @@ export const LeadWorkflowPage: React.FC = () => {
                         Project Name *
                       </label>
                       <input
+                        id="site-visit-project"
                         type="text"
                         value={siteVisitProject}
                         onChange={(e) => setSiteVisitProject(e.target.value)}
@@ -2551,6 +2655,7 @@ export const LeadWorkflowPage: React.FC = () => {
                       Site Visit Notes / Preparation
                     </label>
                     <textarea
+                      id="site-visit-remarks"
                       rows={2}
                       value={siteVisitRemarks}
                       onChange={(e) => setSiteVisitRemarks(e.target.value)}
@@ -2563,6 +2668,7 @@ export const LeadWorkflowPage: React.FC = () => {
                   <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
                     <label className="flex items-start gap-2.5 cursor-pointer">
                       <input
+                        id="site-visit-is-completed"
                         type="checkbox"
                         checked={isSiteVisitCompleted}
                         onChange={(e) => setIsSiteVisitCompleted(e.target.checked)}
@@ -2585,6 +2691,7 @@ export const LeadWorkflowPage: React.FC = () => {
                           Site Visit Outcome / Client Reaction *
                         </label>
                         <input
+                          id="site-visit-outcome"
                           type="text"
                           value={siteVisitOutcome}
                           onChange={(e) => setSiteVisitOutcome(e.target.value)}
@@ -2681,6 +2788,7 @@ export const LeadWorkflowPage: React.FC = () => {
                     Confirmed Project *
                   </label>
                   <input
+                    id="deal-project"
                     type="text"
                     value={dealProject}
                     onChange={(e) => setDealProject(e.target.value)}
@@ -2695,6 +2803,7 @@ export const LeadWorkflowPage: React.FC = () => {
                     Property Type *
                   </label>
                   <select
+                    id="deal-property-type"
                     value={propertyType}
                     onChange={(e) => setPropertyType(e.target.value)}
                     className="w-full px-3 py-2 bg-surface-card border border-edge rounded-lg text-xs"
@@ -2713,6 +2822,7 @@ export const LeadWorkflowPage: React.FC = () => {
                     Final Deal Price (₹) *
                   </label>
                   <input
+                    id="deal-price"
                     type="number"
                     value={dealPrice}
                     onChange={(e) => setDealPrice(e.target.value)}
@@ -2727,6 +2837,7 @@ export const LeadWorkflowPage: React.FC = () => {
                     Unit Size *
                   </label>
                   <input
+                    id="deal-size"
                     type="text"
                     value={dealSize}
                     onChange={(e) => setDealSize(e.target.value)}
@@ -2742,6 +2853,7 @@ export const LeadWorkflowPage: React.FC = () => {
                   Booking Remarks & Advance Payment Details
                 </label>
                 <textarea
+                  id="deal-remarks"
                   rows={2}
                   value={dealRemarks}
                   onChange={(e) => setDealRemarks(e.target.value)}
@@ -2754,6 +2866,7 @@ export const LeadWorkflowPage: React.FC = () => {
               <div className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-xl space-y-2">
                 <label className="flex items-start gap-2.5 cursor-pointer">
                   <input
+                    id="deal-confirmed"
                     type="checkbox"
                     checked={isDealConfirmed}
                     onChange={(e) => setIsDealConfirmed(e.target.checked)}
@@ -3188,6 +3301,7 @@ export const LeadWorkflowPage: React.FC = () => {
                 Mandatory Rejection Reason *
               </label>
               <select
+                id="reject-reason"
                 value={rejectionReason}
                 onChange={(e) => setRejectionReason(e.target.value)}
                 className="w-full p-2.5 border border-slate-300 rounded-lg text-xs text-slate-900 focus:ring-1 focus:ring-red-500 bg-white"
@@ -3206,6 +3320,7 @@ export const LeadWorkflowPage: React.FC = () => {
                 Remarks <span className="text-red-600 font-bold">* Mandatory remarks required (Mandatory for &apos;Other&apos; and all reasons)</span>
               </label>
               <textarea
+                id="reject-remarks"
                 rows={3}
                 value={rejectionRemarks}
                 onChange={(e) => setRejectionRemarks(e.target.value)}
@@ -3218,6 +3333,7 @@ export const LeadWorkflowPage: React.FC = () => {
             <div className="p-3 bg-red-50/60 border border-red-200 rounded-lg">
               <label className="flex items-start gap-2.5 cursor-pointer">
                 <input
+                  id="reject-confirmed"
                   type="checkbox"
                   checked={isRejectionConfirmed}
                   onChange={(e) => setIsRejectionConfirmed(e.target.checked)}
@@ -3309,6 +3425,7 @@ export const LeadWorkflowPage: React.FC = () => {
                 Mandatory Deal Lost Reason *
               </label>
               <select
+                id="deal-lost-reason"
                 value={dealLostReason}
                 onChange={(e) => setDealLostReason(e.target.value)}
                 className="w-full p-2.5 border border-slate-300 rounded-lg text-xs text-slate-900 focus:ring-1 focus:ring-amber-500 bg-white"
@@ -3327,6 +3444,7 @@ export const LeadWorkflowPage: React.FC = () => {
                 Remarks <span className="text-amber-700 font-bold">* Mandatory remarks required</span>
               </label>
               <textarea
+                id="deal-lost-remarks"
                 rows={3}
                 value={dealLostRemarks}
                 onChange={(e) => setDealLostRemarks(e.target.value)}
@@ -3339,6 +3457,7 @@ export const LeadWorkflowPage: React.FC = () => {
             <div className="p-3 bg-amber-50/60 border border-amber-200 rounded-lg">
               <label className="flex items-start gap-2.5 cursor-pointer">
                 <input
+                  id="deal-lost-confirmed"
                   type="checkbox"
                   checked={isDealLostConfirmed}
                   onChange={(e) => setIsDealLostConfirmed(e.target.checked)}
@@ -3419,6 +3538,7 @@ export const LeadWorkflowPage: React.FC = () => {
                 Mandatory Closing Reason *
               </label>
               <textarea
+                id="close-reason"
                 rows={3}
                 value={closingReason}
                 onChange={(e) => setClosingReason(e.target.value)}
@@ -3628,6 +3748,7 @@ export const LeadWorkflowPage: React.FC = () => {
                 Cancellation Reason <span className="text-rose-500">*</span>
               </label>
               <textarea
+                id="cancel-plan-reason"
                 rows={3}
                 value={cancelReasonInput}
                 onChange={(e) => {
