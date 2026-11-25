@@ -22,6 +22,7 @@ export interface AssignLeadModalProps {
   selectedLeads: IEnquiry[];
   currentUser: UserProfile;
   onSuccess: () => void;
+  isReassignment?: boolean;
 }
 
 export const AssignLeadModal: React.FC<AssignLeadModalProps> = ({
@@ -29,7 +30,8 @@ export const AssignLeadModal: React.FC<AssignLeadModalProps> = ({
   onClose,
   selectedLeads,
   currentUser,
-  onSuccess
+  onSuccess,
+  isReassignment = false,
 }) => {
   const [agents, setAgents] = useState<EligibleAgentSummary[]>([]);
   const [isLoadingAgents, setIsLoadingAgents] = useState<boolean>(true);
@@ -47,10 +49,14 @@ export const AssignLeadModal: React.FC<AssignLeadModalProps> = ({
       if (res.success && res.data) {
         let agentList = res.data.agents || [];
         // Role-based filtering:
-        // Manager can only assign to agents in their own team
+        // Manager can only assign to active agents currently in their own team
         if (currentUser.role === 'MANAGER') {
           agentList = agentList.filter((a) => {
-            return a.managerId === currentUser.id || a.managerName === currentUser.name;
+            const belongsToMgr =
+              a.isAssignedToCurrentManager ||
+              a.managerId === currentUser.id ||
+              a.managerName === currentUser.name;
+            return belongsToMgr && a.isTeamActive !== false;
           });
         }
         // Only active agents
@@ -135,7 +141,11 @@ export const AssignLeadModal: React.FC<AssignLeadModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-content-primary">
-                {leadCount === 1 ? `Assign Lead: ${sampleLead?.name || 'Customer'}` : `Assign ${leadCount} Unassigned Leads`}
+                {leadCount === 1
+                  ? `${isReassignment ? 'Reassign' : 'Assign'} Lead: ${sampleLead?.name || 'Customer'}`
+                  : isReassignment
+                  ? `Reassign ${leadCount} Assigned Leads`
+                  : `Assign ${leadCount} Unassigned Leads`}
               </h2>
               <p className="text-xs text-content-secondary mt-0.5">
                 {currentUser.role === 'ADMIN'

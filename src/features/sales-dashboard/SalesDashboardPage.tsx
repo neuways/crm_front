@@ -7,10 +7,14 @@ import {
   RefreshCw,
   X,
   FileSpreadsheet,
+  CalendarCheck,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { UserProfile } from "../../types/auth.types.js";
 import { PeriodSelector } from "../../components/ui/PeriodSelector.js";
 import { Button } from "../../components/ui/Button.js";
+import { MetricCard } from "../../components/ui/MetricCard.js";
 import { SalesKpiCards } from "./components/SalesKpiCards.js";
 import { NewLeadTable } from "./components/NewLeadTable.js";
 import {
@@ -20,6 +24,7 @@ import {
 import { LeadQualificationTable } from "./components/LeadQualificationTable.js";
 import { NewEnquiryModal } from "./components/NewEnquiryModal.js";
 import { FollowUpModal } from "./components/FollowUpModal.js";
+import { MyDailyActivityScorecard } from "./components/MyDailyActivityScorecard.js";
 import { useSalesDashboard } from "./hooks/useSalesDashboard.js";
 import { NewLeadItem } from "./types/dashboard.types.js";
 import { matchesDatePeriod, matchesGlobalFilter } from "./utils/dashboardFilters.js";
@@ -36,11 +41,13 @@ export const SalesDashboardPage: React.FC = () => {
   const [isNewEnquiryModalOpen, setIsNewEnquiryModalOpen] =
     React.useState<boolean>(false);
   const [globalFilterText, setGlobalFilterText] = React.useState<string>("");
+  const [scorecardRefreshKey, setScorecardRefreshKey] = React.useState<number>(0);
 
   const {
     selectedPeriod,
     setSelectedPeriod,
     kpiMetrics,
+    pipelineOverview,
     newLeads,
     pendingFollowUps,
     futureFollowUps,
@@ -179,9 +186,58 @@ export const SalesDashboardPage: React.FC = () => {
       </div>
 
       {/* -------------------------------------------------------------
-       * Section 5.B: Four KPI Cards (Preserved Modern Layout)
+       * Section 5.B: Four KPI Cards & My Today's Activity Scorecard
        * ------------------------------------------------------------- */}
       <SalesKpiCards metrics={kpiMetrics} />
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        <MetricCard
+          title="Meetings / Site Visits"
+          subtitle={
+            pipelineOverview.meetingPlanCount > 0 || pipelineOverview.siteVisitPlanCount > 0
+              ? `Meetings: ${pipelineOverview.meetingPlanCount} • Visits: ${pipelineOverview.siteVisitPlanCount}`
+              : "Stage 2 & Stage 3 Pipeline"
+          }
+          value={pipelineOverview.meetingsAndVisitsCount}
+          badgeText="Scheduled Milestones"
+          badgeType="info"
+          icon={<CalendarCheck className="h-5 w-5" />}
+          iconBgColor="bg-purple-50 text-purple-600"
+          isMockData={isDemoMode}
+          ariaLabel="View leads in meeting and site visit stages"
+          onClick={() => navigate("/leads?tab=active&stage=MEETING_PLAN")}
+        />
+        <MetricCard
+          title="Completed Deals"
+          subtitle="Closed & Finalized"
+          value={pipelineOverview.completedDealsCount}
+          badgeText="Deal Done"
+          badgeType="positive"
+          icon={<CheckCircle2 className="h-5 w-5" />}
+          iconBgColor="bg-emerald-50 text-emerald-600"
+          isMockData={isDemoMode}
+          ariaLabel="View completed deals"
+          onClick={() => navigate("/completed-deals")}
+        />
+        <MetricCard
+          title="Rejected / Lost"
+          subtitle={
+            pipelineOverview.dealLostCount > 0
+              ? `Rejected: ${pipelineOverview.explicitRejectedCount} • Lost: ${pipelineOverview.dealLostCount}`
+              : "Closed & Disqualified"
+          }
+          value={pipelineOverview.rejectedCount}
+          badgeText={`${pipelineOverview.rejectedCount} Lost`}
+          badgeType="neutral"
+          icon={<XCircle className="h-5 w-5" />}
+          iconBgColor="bg-red-50 text-red-600"
+          isMockData={isDemoMode}
+          ariaLabel="View rejected and lost leads"
+          onClick={() => navigate("/leads?tab=rejected")}
+        />
+      </div>
+
+      <MyDailyActivityScorecard refreshTrigger={scorecardRefreshKey} />
 
       {/* -------------------------------------------------------------
        * Section 6.1: Assigned Leads Table (Sequential Workflow)
@@ -193,7 +249,10 @@ export const SalesDashboardPage: React.FC = () => {
         isDemoMode={isDemoMode}
         selectedPeriod={selectedPeriod}
         onPeriodChange={setSelectedPeriod}
-        onRetry={refreshLeads}
+        onRetry={() => {
+          refreshLeads();
+          setScorecardRefreshKey((k) => k + 1);
+        }}
         onFollowUpClick={handleFollowUpClick}
         onShowNotice={onShowPlaceholderNotice}
         hideAgentFilter={true}
@@ -228,6 +287,7 @@ export const SalesDashboardPage: React.FC = () => {
         onClose={() => setActiveFollowUpLead(null)}
         onFollowUpLogged={() => {
           refreshLeads();
+          setScorecardRefreshKey((k) => k + 1);
         }}
       />
 

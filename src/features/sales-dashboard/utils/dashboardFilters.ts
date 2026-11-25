@@ -1,10 +1,12 @@
 import { DashboardPeriod, NewLeadItem } from '../types/dashboard.types.js';
+import { getFollowUpOutcomeMeta } from '../../../utils/followUpOutcome.js';
 
 export interface TableFilterState {
   stage: string;
   status: string;
   agent: string;
   followUp: string;
+  outcome?: string;
 }
 
 /**
@@ -93,6 +95,13 @@ export const matchesGlobalFilter = (lead: NewLeadItem, term: string): boolean =>
   };
   if (lead.currentStage && stageKeywords[lead.currentStage]?.toLowerCase().includes(q)) return true;
 
+  // 3b. Granular Follow-Up Outcome
+  if (lead.lastFollowUpOutcome) {
+    if (lead.lastFollowUpOutcome.toLowerCase().includes(q)) return true;
+    const outcomeMeta = getFollowUpOutcomeMeta(lead.lastFollowUpOutcome);
+    if (outcomeMeta?.label.toLowerCase().includes(q)) return true;
+  }
+
   // 4. Status
   if (lead.status?.toLowerCase().includes(q)) return true;
   if (q === 'active' && (!lead.status || lead.status === 'ACTIVE')) return true;
@@ -171,6 +180,15 @@ export const matchesTableFilters = (lead: NewLeadItem, filters: TableFilterState
       const todayMidnight = new Date();
       todayMidnight.setHours(0, 0, 0, 0);
       if (d >= todayMidnight) return false;
+    }
+  }
+
+  // 5. Follow-up Outcome Filter
+  if (filters.outcome && filters.outcome !== 'ALL') {
+    if (filters.outcome === '__NONE__') {
+      if (lead.lastFollowUpOutcome) return false;
+    } else if (lead.lastFollowUpOutcome !== filters.outcome) {
+      return false;
     }
   }
 

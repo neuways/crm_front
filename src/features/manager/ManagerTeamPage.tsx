@@ -153,6 +153,15 @@ export const ManagerTeamPage: React.FC = () => {
           </Button>
           <Button
             size="sm"
+            variant="outline"
+            icon={<UserCheck className="h-4 w-4 text-emerald-600" />}
+            onClick={() => navigate('/manager/leads?tab=unassigned')}
+            className="border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+          >
+            Assign Leads
+          </Button>
+          <Button
+            size="sm"
             variant="primary"
             icon={<Filter className="h-4 w-4" />}
             onClick={() => navigate('/manager/leads')}
@@ -433,6 +442,7 @@ export const ManagerTeamPage: React.FC = () => {
       <AssignAgentModal
         isOpen={isAssignAgentModalOpen}
         onClose={() => setIsAssignAgentModalOpen(false)}
+        currentManagerId={currentManagerId}
         onSuccess={() => {
           fetchTeamData();
         }}

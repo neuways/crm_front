@@ -3,7 +3,10 @@ import { X, UserPlus, Eye, EyeOff, Sparkles, Check, Copy, AlertCircle, ShieldAle
 import { Button } from '../../../components/ui/Button.js';
 import { CreateEmployeeInput, EmployeeProfile } from '../../../types/user.types.js';
 import { userService } from '../../../services/user.service.js';
+import { useAuth } from '../../../context/AuthContext.js';
 import { PropertiesSelect } from './PropertiesSelect.js';
+
+const INDIAN_MOBILE_REGEX = /^[6-9]\d{9}$/;
 
 export interface AddEmployeeModalProps {
   isOpen: boolean;
@@ -18,8 +21,11 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
   managers = [],
   onEmployeeCreated,
 }) => {
+  const { user: currentUser } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [role, setRole] = useState<'MANAGER' | 'SALES'>('SALES');
   const [managerId, setManagerId] = useState<string>('');
   const [propertyIds, setPropertyIds] = useState<string[]>([]);
@@ -55,7 +61,7 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
 
   const handleCopyCredentials = async () => {
     if (!createdEmployee) return;
-    const text = `Nueways CRM - Employee Account Provisioned\n\nName: ${createdEmployee.name}\nEmail: ${createdEmployee.email}\nRole: ${createdEmployee.role}\nTemporary Password: ${createdPasswordSnapshot}\nSign-in URL: ${window.location.origin}/login\n\nNote: You can log in with this temporary password (you will be prompted to set your own private password), or sign in directly with Google using this email.`;
+    const text = `Nueways CRM - Employee Account Provisioned\n\nName: ${createdEmployee.name}\nEmail: ${createdEmployee.email}\nMobile: ${createdEmployee.phone || 'Not provided'}\nRole: ${createdEmployee.role}\nTemporary Password: ${createdPasswordSnapshot}\nSign-in URL: ${window.location.origin}/login\n\nNote: You can log in with this temporary password (you will be prompted to set your own private password), or sign in directly with Google using this email.`;
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
@@ -68,6 +74,7 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    setPhoneError(null);
 
     const trimmedName = name.trim();
     if (!trimmedName || trimmedName.length < 2) {
@@ -81,6 +88,20 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
       return;
     }
 
+    const trimmedPhone = phone.trim();
+    if (!trimmedPhone) {
+      const msg = 'Mobile number is required.';
+      setPhoneError(msg);
+      setErrorMessage(msg);
+      return;
+    }
+    if (!INDIAN_MOBILE_REGEX.test(trimmedPhone)) {
+      const msg = 'Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.';
+      setPhoneError(msg);
+      setErrorMessage(msg);
+      return;
+    }
+
     if (!temporaryPassword || temporaryPassword.length < 8) {
       setErrorMessage('Temporary password must be at least 8 characters long.');
       return;
@@ -91,9 +112,10 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
       const payload: CreateEmployeeInput = {
         name: trimmedName,
         email: trimmedEmail,
+        phone: trimmedPhone,
         role,
         temporaryPassword,
-        managerId: role === 'SALES' ? (managerId || null) : null,
+        managerId: role === 'SALES' ? (managerId || currentUser?.id || null) : null,
         propertyIds: role === 'SALES' ? propertyIds : undefined,
       };
 
@@ -116,6 +138,8 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
   const handleClose = () => {
     setName('');
     setEmail('');
+    setPhone('');
+    setPhoneError(null);
     setRole('SALES');
     setManagerId('');
     setPropertyIds([]);
@@ -187,10 +211,26 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
                 <span className="text-content-muted">Email</span>
                 <span className="font-semibold text-content-primary">{createdEmployee.email}</span>
               </div>
+              {createdEmployee.phone && (
+                <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-200">
+                  <span className="text-content-muted">Mobile</span>
+                  <span className="font-semibold text-content-primary font-mono">{createdEmployee.phone}</span>
+                </div>
+              )}
               <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-200">
                 <span className="text-content-muted">Role</span>
                 <span className="font-bold text-brand-primary">{createdEmployee.role}</span>
               </div>
+              {createdEmployee.managerName && (
+                <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-200">
+                  <span className="text-content-muted">Supervisor</span>
+                  <span className="font-semibold text-content-primary">
+                    {createdEmployee.managerRole === 'ADMIN'
+                      ? `Direct Admin — ${createdEmployee.managerName}`
+                      : createdEmployee.managerName}
+                  </span>
+                </div>
+              )}
               {createdEmployee.assignedProperties && createdEmployee.assignedProperties.length > 0 && (
                 <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-200">
                   <span className="text-content-muted">Properties</span>
@@ -221,6 +261,7 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
 
             <div className="flex items-center justify-between gap-3 pt-3">
               <Button
+                type="button"
                 variant="outline"
                 size="sm"
                 icon={copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
@@ -231,6 +272,7 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
               </Button>
 
               <Button
+                type="button"
                 variant="primary"
                 size="sm"
                 onClick={handleClose}
@@ -281,6 +323,43 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
               <p className="text-[11px] text-content-muted mt-1">
                 Managers and Sales Agents may use pre-approved personal Gmail or company accounts.
               </p>
+            </div>
+
+            {/* Mobile Number */}
+            <div>
+              <label className="block text-xs font-semibold text-content-primary mb-1">
+                Mobile Number <span className="text-status-danger">*</span>
+              </label>
+              <input
+                type="tel"
+                inputMode="numeric"
+                maxLength={10}
+                required
+                value={phone}
+                onChange={(e) => {
+                  const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 10);
+                  setPhone(digitsOnly);
+                  if (phoneError) setPhoneError(null);
+                }}
+                onBlur={() => {
+                  if (phone.trim() && !INDIAN_MOBILE_REGEX.test(phone.trim())) {
+                    setPhoneError('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
+                  }
+                }}
+                placeholder="e.g. 9876543210"
+                className={`w-full px-3 py-2 bg-surface-card border rounded-lg text-xs text-content-primary placeholder:text-content-muted focus:outline-none focus:ring-2 font-mono ${
+                  phoneError
+                    ? 'border-status-danger focus:ring-status-danger'
+                    : 'border-edge focus:ring-brand-primary'
+                }`}
+              />
+              {phoneError ? (
+                <p className="text-[11px] text-status-danger mt-1">{phoneError}</p>
+              ) : (
+                <p className="text-[11px] text-content-muted mt-1">
+                  10-digit Indian mobile number starting with 6, 7, 8, or 9.
+                </p>
+              )}
             </div>
 
             {/* Role Selection */}
@@ -345,7 +424,7 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
             </div>
 
             {/* Assigned Manager Dropdown (Only for Sales Agents) */}
-            {role === 'SALES' && managers.length > 0 && (
+            {role === 'SALES' && (
               <div>
                 <label className="block text-xs font-semibold text-content-primary mb-1">
                   Assign to Manager (Supervisor)
@@ -355,7 +434,11 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
                   onChange={(e) => setManagerId(e.target.value)}
                   className="w-full px-3 py-2 bg-surface-card border border-edge rounded-lg text-xs text-content-primary focus:outline-none focus:ring-2 focus:ring-brand-primary"
                 >
-                  <option value="">No Manager Assigned (Direct Executive)</option>
+                  <option value="">
+                    {currentUser?.name
+                      ? `Direct Admin — ${currentUser.name} (Reports to Admin)`
+                      : 'Direct Admin (Reports to Admin)'}
+                  </option>
                   {managers
                     .filter((m) => m.isActive && m.role === 'MANAGER')
                     .map((m) => (
@@ -365,7 +448,7 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
                     ))}
                 </select>
                 <span className="text-[10px] text-content-muted mt-1 block">
-                  Assigns this sales agent to a reporting manager for meeting plans and team oversight.
+                  Select a reporting manager, or leave as Direct Admin to assign this sales agent directly under Admin oversight.
                 </span>
               </div>
             )}

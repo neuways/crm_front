@@ -88,6 +88,8 @@ export const AppRoutes: React.FC = () => {
         <Route path="leads/:leadId/workflow" element={<LeadWorkflowPage />} />
 
         {/* Completed Deals Register Routes */}
+        <Route path="completed-deals" element={<CompletedDealsPage />} />
+        <Route path="completed-deals/:dealId" element={<CompletedDealDetailPage />} />
         <Route path="sales/completed-deals" element={<CompletedDealsPage />} />
         <Route path="sales/completed-deals/:dealId" element={<CompletedDealDetailPage />} />
 
@@ -199,6 +201,22 @@ export const AppRoutes: React.FC = () => {
           element={
             <ProtectedRoute allowedRoles={['MANAGER']}>
               <ManagerTeamPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="manager/assign-leads"
+          element={
+            <ProtectedRoute allowedRoles={['MANAGER', 'ADMIN']}>
+              <Navigate to="/leads" replace />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="admin/assign-leads"
+          element={
+            <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
+              <Navigate to="/leads" replace />
             </ProtectedRoute>
           }
         />

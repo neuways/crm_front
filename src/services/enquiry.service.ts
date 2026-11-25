@@ -60,8 +60,12 @@ export class EnquiryService {
     dealLost?: boolean;
     closureType?: ClosureType;
     unassigned?: boolean;
+    assignedOnly?: boolean;
     unassignedReason?: string;
     assignedTo?: string;
+    excludeAssignedTo?: string;
+    managerId?: string;
+    project?: string;
   }): Promise<ApiResponse<GetEnquiriesResponseData>> {
     const searchParams = new URLSearchParams();
     if (params?.page) searchParams.set("page", params.page.toString());
@@ -86,11 +90,23 @@ export class EnquiryService {
     if (params?.unassigned !== undefined) {
       searchParams.set("unassigned", params.unassigned.toString());
     }
+    if (params?.assignedOnly !== undefined) {
+      searchParams.set("assignedOnly", params.assignedOnly.toString());
+    }
     if (params?.unassignedReason) {
       searchParams.set("unassignedReason", params.unassignedReason);
     }
     if (params?.assignedTo) {
       searchParams.set("assignedTo", params.assignedTo);
+    }
+    if (params?.excludeAssignedTo) {
+      searchParams.set("excludeAssignedTo", params.excludeAssignedTo);
+    }
+    if (params?.managerId && params.managerId !== "ALL") {
+      searchParams.set("managerId", params.managerId);
+    }
+    if (params?.project && params.project !== "ALL") {
+      searchParams.set("project", params.project);
     }
 
     const query = searchParams.toString() ? `?${searchParams.toString()}` : "";
@@ -321,9 +337,10 @@ export class EnquiryService {
     enquiryIds: string[],
     config: { assignedToId?: string; method?: 'MANUAL' | 'ROUND_ROBIN' }
   ): Promise<ApiResponse<{ assignedCount: number; failedCount: number; message: string; errors?: any[] }>> {
+    const resolvedAgentId = config.assignedToId?.trim() || undefined;
     return api.post<any, any>('/enquiries/bulk-assign', {
       enquiryIds,
-      assignedToId: config.assignedToId,
+      ...(resolvedAgentId ? { assignedTo: resolvedAgentId, assignedToId: resolvedAgentId } : {}),
       method: config.method || 'MANUAL'
     });
   }
@@ -344,9 +361,19 @@ export class EnquiryService {
 
   /**
    * Assigns an available sales agent to the authenticated Manager's team: POST /api/v1/enquiries/team/assign
+   * Optionally assigns initial leads in the same onboarding request.
    */
-  async assignAgentToTeam(agentId: string): Promise<ApiResponse<{ agent: EligibleAgentSummary }>> {
-    return api.post<{ agent: EligibleAgentSummary }, { agentId: string }>("/enquiries/team/assign", { agentId });
+  async assignAgentToTeam(
+    agentId: string,
+    initialLeadIds?: string[]
+  ): Promise<ApiResponse<{ agent: EligibleAgentSummary; assignedLeadsCount?: number; failedLeadsCount?: number }>> {
+    return api.post<
+      { agent: EligibleAgentSummary; assignedLeadsCount?: number; failedLeadsCount?: number },
+      { agentId: string; initialLeadIds?: string[] }
+    >("/enquiries/team/assign", {
+      agentId,
+      ...(initialLeadIds && initialLeadIds.length > 0 ? { initialLeadIds } : {}),
+    });
   }
 
   /**
@@ -452,6 +479,91 @@ export class EnquiryService {
   ): Promise<ApiResponse<{ isDoNotContact: boolean; normalizedMobile: string; details?: DncDetails | null }>> {
     return api.get<{ isDoNotContact: boolean; normalizedMobile: string; details?: DncDetails | null }>(
       `/enquiries/${enquiryId}/do-not-contact`
+    );
+  }
+
+  /**
+   * 1-Click Quick Interaction & Call Attempt Logging:
+   * Path: POST /api/v1/enquiries/:id/quick-activity
+   */
+  async logQuickActivity(
+    enquiryId: string,
+    input: import("../types/enquiry.types.js").QuickActivityPayload
+  ): Promise<ApiResponse<{ enquiry: IEnquiry; activity?: any; followUp?: any }>> {
+    return api.post<
+      { enquiry: IEnquiry; activity?: any; followUp?: any },
+      import("../types/enquiry.types.js").QuickActivityPayload
+    >(`/enquiries/${enquiryId}/quick-activity`, input);
+  }
+
+  /**
+   * Team Work & Call Accountability Report:
+   * Path: GET /api/v1/enquiries/team-activity-report
+   */
+  async getTeamActivityReport(params?: {
+    period?: import("../types/enquiry.types.js").ReportPeriod;
+    startDate?: string;
+    endDate?: string;
+    employeeId?: string;
+    managerId?: string;
+  }): Promise<ApiResponse<import("../types/enquiry.types.js").TeamActivityReportData>> {
+    const q = new URLSearchParams();
+    if (params?.period) q.append("period", params.period);
+    if (params?.startDate) q.append("startDate", params.startDate);
+    if (params?.endDate) q.append("endDate", params.endDate);
+    if (params?.employeeId) q.append("employeeId", params.employeeId);
+    if (params?.managerId) q.append("managerId", params.managerId);
+    const qs = q.toString();
+    return api.get<import("../types/enquiry.types.js").TeamActivityReportData>(
+      `/enquiries/team-activity-report${qs ? `?${qs}` : ""}`
+    );
+  }
+
+  /**
+   * Cross-Lead Chronological Activity Feed:
+   * Path: GET /api/v1/enquiries/activity-feed
+   */
+  async getActivityFeed(params?: {
+    period?: import("../types/enquiry.types.js").ReportPeriod;
+    startDate?: string;
+    endDate?: string;
+    employeeId?: string;
+    managerId?: string;
+    outcome?: string;
+    activityType?: string;
+    enquiryId?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<ApiResponse<import("../types/enquiry.types.js").ActivityFeedData>> {
+    const q = new URLSearchParams();
+    if (params?.period) q.append("period", params.period);
+    if (params?.startDate) q.append("startDate", params.startDate);
+    if (params?.endDate) q.append("endDate", params.endDate);
+    if (params?.employeeId) q.append("employeeId", params.employeeId);
+    if (params?.managerId) q.append("managerId", params.managerId);
+    if (params?.outcome) q.append("outcome", params.outcome);
+    if (params?.activityType) q.append("activityType", params.activityType);
+    if (params?.enquiryId) q.append("enquiryId", params.enquiryId);
+    if (params?.search) q.append("search", params.search);
+    if (params?.page) q.append("page", String(params.page));
+    if (params?.limit) q.append("limit", String(params.limit));
+    const qs = q.toString();
+    return api.get<import("../types/enquiry.types.js").ActivityFeedData>(
+      `/enquiries/activity-feed${qs ? `?${qs}` : ""}`
+    );
+  }
+
+  /**
+   * Explicit Daily Work Report Submission (Sales -> Manager + Admin, Manager -> Admin):
+   * Path: POST /api/v1/enquiries/work-report/submit
+   */
+  async submitWorkReport(
+    input: import("../types/enquiry.types.js").SubmitWorkReportPayload
+  ): Promise<ApiResponse<{ activity?: any }>> {
+    return api.post<{ activity?: any }, import("../types/enquiry.types.js").SubmitWorkReportPayload>(
+      "/enquiries/work-report/submit",
+      input
     );
   }
 }

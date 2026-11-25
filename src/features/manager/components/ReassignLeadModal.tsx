@@ -1,11 +1,24 @@
-import React, { useState, useEffect } from 'react';
-import { X, UserCheck, AlertCircle, ArrowRight, ShieldCheck } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import Swal from 'sweetalert2';
+import {
+  X,
+  UserCheck,
+  AlertCircle,
+  ArrowRight,
+  ShieldCheck,
+  Search,
+  CheckSquare,
+} from 'lucide-react';
 import { Button } from '../../../components/ui/Button.js';
 import { EmptyState } from '../../../components/ui/EmptyState.js';
 import { LoadingState } from '../../../components/ui/LoadingState.js';
 import { enquiryService } from '../../../services/enquiry.service.js';
 import { TeamMemberPerformance } from '../../../types/enquiry.types.js';
 import { maskPhoneNumber } from '../../../utils/phone.js';
+import {
+  getFollowUpOutcomeMeta,
+  getWorkflowStageMeta,
+} from '../../../utils/followUpOutcome.js';
 
 export interface EligibleLeadItem {
   id: string;
@@ -13,7 +26,8 @@ export interface EligibleLeadItem {
   mobile?: string;
   projectName?: string;
   currentStage?: string;
-  assignedTo?: { id: string; name: string; role?: string } | null;
+  lastFollowUpOutcome?: string;
+  assignedTo?: { id: string; _id?: string; name: string; role?: string } | null;
 }
 
 export interface ReassignLeadModalProps {
@@ -26,6 +40,41 @@ export interface ReassignLeadModalProps {
   onSuccess: () => void;
 }
 
+type OwnershipFilter = 'ALL' | 'UNASSIGNED' | 'OTHER_AGENTS';
+
+const getLeadAssigneeId = (item: EligibleLeadItem): string => {
+  if (!item.assignedTo) return '';
+  if (typeof item.assignedTo === 'string') return item.assignedTo;
+  return item.assignedTo.id || item.assignedTo._id || '';
+};
+
+const normalizeLeadItem = (e: any): EligibleLeadItem => {
+  const rawOwner = e.assignedTo;
+  let normalizedOwner: EligibleLeadItem['assignedTo'] = null;
+  if (rawOwner && typeof rawOwner === 'object') {
+    const ownerId = rawOwner.id || rawOwner._id?.toString() || '';
+    if (ownerId) {
+      normalizedOwner = {
+        id: ownerId,
+        name: rawOwner.name || 'Team Member',
+        role: rawOwner.role,
+      };
+    }
+  } else if (typeof rawOwner === 'string' && rawOwner) {
+    normalizedOwner = { id: rawOwner, name: 'Team Member' };
+  }
+
+  return {
+    id: (e._id || e.id || '').toString(),
+    name: e.name,
+    mobile: e.mobile || e.normalizedMobile,
+    projectName: e.projectName,
+    currentStage: e.currentStage || 'FOLLOW_UP',
+    lastFollowUpOutcome: e.lastFollowUpOutcome,
+    assignedTo: normalizedOwner,
+  };
+};
+
 export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
   isOpen,
   onClose,
@@ -36,17 +85,24 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
   onSuccess,
 }) => {
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
-  const [eligibleLeads, setEligibleLeads] = useState<EligibleLeadItem[]>([]);
-  const [selectedLeadId, setSelectedLeadId] = useState<string>('');
+  const [allEligibleLeads, setAllEligibleLeads] = useState<EligibleLeadItem[]>([]);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
+  const [ownershipFilter, setOwnershipFilter] = useState<OwnershipFilter>('ALL');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [isLoadingLeads, setIsLoadingLeads] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Synchronize target agent when modal opens or targetAgent changes
+  // Synchronize target agent & reset local filter controls when modal opens
   useEffect(() => {
+    if (!isOpen) return;
+    setError(null);
+    setSearchQuery('');
+    setOwnershipFilter('ALL');
+
     if (targetAgent?.id) {
       setSelectedAgentId(targetAgent.id);
-    } else if (teamMembers.length > 0 && !selectedAgentId) {
+    } else if (teamMembers.length > 0) {
       const firstActive = teamMembers.find((m) => m.isActive);
       if (firstActive) {
         setSelectedAgentId(firstActive.id);
@@ -54,15 +110,16 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
     }
   }, [targetAgent, teamMembers, isOpen]);
 
-  // Synchronize pre-selected lead if provided
+  // Synchronize pre-selected single lead if provided directly
   useEffect(() => {
     if (lead?.id) {
-      setSelectedLeadId(lead.id);
-      setEligibleLeads([lead]);
+      const normalized = normalizeLeadItem(lead);
+      setAllEligibleLeads([normalized]);
+      setSelectedLeadIds([normalized.id]);
     }
   }, [lead]);
 
-  // Fetch eligible leads currently assigned to the authenticated manager
+  // Fetch all active team leads + unassigned leads so manager can assign or reassign from any other owner
   useEffect(() => {
     if (!isOpen || lead?.id) return;
 
@@ -71,38 +128,47 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
       setIsLoadingLeads(true);
       setError(null);
       try {
-        const res = await enquiryService.getEnquiries({
-          assignedTo: currentManagerId || 'me',
-          status: 'ACTIVE',
-          excludeCompletedDeals: true,
-          limit: 100,
-        });
+        const [activeRes, unassignedRes] = await Promise.all([
+          enquiryService.getEnquiries({
+            status: 'ACTIVE',
+            excludeCompletedDeals: true,
+            limit: 100,
+          }),
+          enquiryService.getEnquiries({
+            unassigned: true,
+            status: 'ACTIVE',
+            excludeCompletedDeals: true,
+            limit: 100,
+          }).catch(() => null),
+        ]);
 
         if (!isCancelled) {
-          if (res.success && res.data?.enquiries) {
-            const leads: EligibleLeadItem[] = res.data.enquiries.map((e: any) => ({
-              id: e._id || e.id,
-              name: e.name,
-              mobile: e.mobile || e.normalizedMobile,
-              projectName: e.projectName,
-              currentStage: e.currentStage || 'FOLLOW_UP',
-              assignedTo: e.assignedTo,
-            }));
-            setEligibleLeads(leads);
-            if (leads.length > 0) {
-              setSelectedLeadId(leads[0].id);
-            } else {
-              setSelectedLeadId('');
+          const mergedMap = new Map<string, EligibleLeadItem>();
+
+          if (unassignedRes?.success && unassignedRes.data?.enquiries) {
+            for (const raw of unassignedRes.data.enquiries) {
+              const item = normalizeLeadItem(raw);
+              if (item.id) mergedMap.set(item.id, item);
             }
-          } else {
-            setEligibleLeads([]);
-            setSelectedLeadId('');
           }
+
+          if (activeRes.success && activeRes.data?.enquiries) {
+            for (const raw of activeRes.data.enquiries) {
+              const item = normalizeLeadItem(raw);
+              if (item.id && !mergedMap.has(item.id)) {
+                mergedMap.set(item.id, item);
+              }
+            }
+          }
+
+          setAllEligibleLeads(Array.from(mergedMap.values()));
+          setSelectedLeadIds([]);
         }
       } catch (err: unknown) {
         if (!isCancelled) {
           setError(err instanceof Error ? err.message : 'Failed to retrieve eligible leads.');
-          setEligibleLeads([]);
+          setAllEligibleLeads([]);
+          setSelectedLeadIds([]);
         }
       } finally {
         if (!isCancelled) {
@@ -115,12 +181,68 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
     return () => {
       isCancelled = true;
     };
-  }, [isOpen, currentManagerId, lead]);
+  }, [isOpen, lead]);
+
+  // Exclude leads already assigned to the currently selected target agent
+  const leadsExcludingTargetAgent = useMemo(() => {
+    if (!selectedAgentId) return allEligibleLeads;
+    return allEligibleLeads.filter((item) => getLeadAssigneeId(item) !== selectedAgentId);
+  }, [allEligibleLeads, selectedAgentId]);
+
+  // Prune any selected IDs that belong to a newly chosen target agent
+  useEffect(() => {
+    if (!selectedAgentId) return;
+    const validIds = new Set(leadsExcludingTargetAgent.map((l) => l.id));
+    setSelectedLeadIds((prev) => prev.filter((id) => validIds.has(id)));
+  }, [selectedAgentId, leadsExcludingTargetAgent]);
+
+  // Apply ownership filter pills + search query
+  const filteredLeads = useMemo(() => {
+    return leadsExcludingTargetAgent.filter((item) => {
+      const ownerId = getLeadAssigneeId(item);
+      if (ownershipFilter === 'UNASSIGNED' && ownerId) return false;
+      if (ownershipFilter === 'OTHER_AGENTS' && !ownerId) return false;
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const ownerName = (item.assignedTo?.name || 'Unassigned').toLowerCase();
+        return (
+          item.name.toLowerCase().includes(q) ||
+          Boolean(item.mobile && item.mobile.toLowerCase().includes(q)) ||
+          Boolean(item.projectName && item.projectName.toLowerCase().includes(q)) ||
+          ownerName.includes(q)
+        );
+      }
+      return true;
+    });
+  }, [leadsExcludingTargetAgent, ownershipFilter, searchQuery]);
 
   if (!isOpen) return null;
 
   const activeTeamMembers = teamMembers.filter((m) => m.isActive);
   const activeTargetAgent = activeTeamMembers.find((m) => m.id === selectedAgentId) || targetAgent;
+  const unassignedCount = leadsExcludingTargetAgent.filter((l) => !getLeadAssigneeId(l)).length;
+  const otherAgentsCount = leadsExcludingTargetAgent.length - unassignedCount;
+
+  const toggleLeadSelection = (id: string) => {
+    setSelectedLeadIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+    setError(null);
+  };
+
+  const handleSelectAllFiltered = () => {
+    const filteredIds = filteredLeads.map((l) => l.id);
+    const allFilteredSelected =
+      filteredIds.length > 0 && filteredIds.every((id) => selectedLeadIds.includes(id));
+
+    if (allFilteredSelected) {
+      const filteredSet = new Set(filteredIds);
+      setSelectedLeadIds((prev) => prev.filter((id) => !filteredSet.has(id)));
+    } else {
+      setSelectedLeadIds(Array.from(new Set([...selectedLeadIds, ...filteredIds])));
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -128,8 +250,8 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
       setError('Please select a target sales agent from your team.');
       return;
     }
-    if (!selectedLeadId) {
-      setError('Please select a lead to reassign.');
+    if (selectedLeadIds.length === 0) {
+      setError('Please select at least one lead to assign.');
       return;
     }
 
@@ -137,20 +259,42 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
     setError(null);
 
     try {
-      const res = await enquiryService.assignLead(selectedLeadId, selectedAgentId);
-      if (res.success) {
-        // Remove assigned lead from local eligible queue immediately
-        setEligibleLeads((prev) => prev.filter((l) => l.id !== selectedLeadId));
+      let ok = false;
+      let errMsg = 'Failed to reassign leads. Please try again.';
+
+      if (selectedLeadIds.length === 1) {
+        const res = await enquiryService.assignLead(selectedLeadIds[0], selectedAgentId);
+        ok = res.success;
+        if (!ok) errMsg = res.message || errMsg;
+      } else {
+        const res = await enquiryService.bulkAssignLeads(selectedLeadIds, {
+          assignedToId: selectedAgentId,
+          method: 'MANUAL',
+        });
+        ok = res.success;
+        if (!ok) errMsg = res.message || errMsg;
+      }
+
+      if (ok) {
+        const reassignedSet = new Set(selectedLeadIds);
+        setAllEligibleLeads((prev) => prev.filter((l) => !reassignedSet.has(l.id)));
         onSuccess();
         onClose();
+        void Swal.fire({
+          icon: 'success',
+          title: 'Lead Ownership Updated',
+          text: `${selectedLeadIds.length} lead${selectedLeadIds.length === 1 ? '' : 's'} assigned to ${activeTargetAgent?.name || 'selected agent'}.`,
+          timer: 2000,
+          showConfirmButton: false,
+        });
       } else {
-        setError(res.message || 'Failed to reassign lead. Please try again.');
+        setError(errMsg);
       }
     } catch (err: unknown) {
       setError(
         err instanceof Error
           ? err.message
-          : 'An unexpected error occurred while reassigning lead.'
+          : 'An unexpected error occurred while reassigning leads.'
       );
     } finally {
       setIsSubmitting(false);
@@ -164,7 +308,7 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
       aria-modal="true"
       aria-labelledby="reassign-modal-title"
     >
-      <div className="bg-surface-card border border-edge rounded-2xl shadow-xl w-full max-w-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      <div className="bg-surface-card border border-edge rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         {/* Modal Header */}
         <div className="px-6 py-4 border-b border-edge flex items-center justify-between bg-surface-subtle/50">
           <div className="flex items-center gap-2.5">
@@ -179,7 +323,7 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
                 Reassign Lead to {activeTargetAgent?.name || 'Sales Agent'}
               </h2>
               <p className="text-xs text-content-muted">
-                Transfer lead ownership to an active sales agent in your team
+                Assign unassigned leads or transfer leads from other team members
               </p>
             </div>
           </div>
@@ -195,7 +339,7 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {/* Target Agent Selector */}
           <div className="space-y-1.5">
             <label
@@ -222,34 +366,114 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
               ))}
             </select>
             <p className="text-[11px] text-content-muted">
-              Only active sales agents reporting to your team are eligible for lead reassignment.
+              Leads already assigned to {activeTargetAgent?.name || 'the selected agent'} are automatically excluded below.
             </p>
           </div>
 
-          {/* Eligible Leads Selection List */}
+          {/* Filter Pills & Search */}
+          {!lead?.id && (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setOwnershipFilter('ALL')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                    ownershipFilter === 'ALL'
+                      ? 'bg-brand-primary text-white'
+                      : 'bg-surface-subtle text-content-secondary hover:bg-slate-200/70'
+                  }`}
+                >
+                  All Available ({leadsExcludingTargetAgent.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOwnershipFilter('UNASSIGNED')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                    ownershipFilter === 'UNASSIGNED'
+                      ? 'bg-amber-600 text-white'
+                      : 'bg-surface-subtle text-content-secondary hover:bg-slate-200/70'
+                  }`}
+                >
+                  Unassigned Only ({unassignedCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOwnershipFilter('OTHER_AGENTS')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                    ownershipFilter === 'OTHER_AGENTS'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-surface-subtle text-content-secondary hover:bg-slate-200/70'
+                  }`}
+                >
+                  From Other Agents ({otherAgentsCount})
+                </button>
+              </div>
+
+              <div className="relative sm:w-56">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-content-subtle" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search lead, phone, owner..."
+                  className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-edge bg-surface-subtle focus:outline-none focus:ring-1 focus:ring-brand-primary"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Eligible Leads Multi-Select List */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-bold text-content-primary uppercase tracking-wider">
-                Select Lead to Reassign {eligibleLeads.length > 0 && `(${eligibleLeads.length} Available)`}
+                SELECT LEAD TO REASSIGN ({filteredLeads.length} AVAILABLE)
               </span>
-              <span className="text-[11px] text-content-muted">
-                Active leads currently assigned to you
-              </span>
+              <div className="flex items-center gap-2">
+                {selectedLeadIds.length > 0 && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-brand-primary">
+                    <CheckSquare className="w-3 h-3" />
+                    {selectedLeadIds.length} Selected
+                  </span>
+                )}
+                {filteredLeads.length > 0 && !lead?.id && (
+                  <button
+                    type="button"
+                    onClick={handleSelectAllFiltered}
+                    className="text-[11px] font-semibold text-brand-primary hover:underline cursor-pointer"
+                  >
+                    {filteredLeads.every((l) => selectedLeadIds.includes(l.id))
+                      ? 'Clear Filtered'
+                      : 'Select All Filtered'}
+                  </button>
+                )}
+              </div>
             </div>
 
             {isLoadingLeads ? (
-              <LoadingState message="Loading your eligible leads..." rows={3} />
-            ) : eligibleLeads.length === 0 ? (
+              <LoadingState message="Loading available leads..." rows={3} />
+            ) : filteredLeads.length === 0 ? (
               <div className="p-6 rounded-xl border border-dashed border-edge bg-surface-subtle/50 text-center space-y-2">
                 <EmptyState
                   title="No Eligible Leads Available"
-                  description="You currently have no active leads assigned to yourself to transfer to your team members."
+                  description={
+                    selectedAgentId
+                      ? `There are no matching unassigned or other-owner leads available to assign to ${activeTargetAgent?.name || 'this agent'}.`
+                      : 'Select a target sales agent above to view transferable leads.'
+                  }
                 />
               </div>
             ) : (
               <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-1">
-                {eligibleLeads.map((leadItem) => {
-                  const isSelected = selectedLeadId === leadItem.id;
+                {filteredLeads.map((leadItem) => {
+                  const isSelected = selectedLeadIds.includes(leadItem.id);
+                  const ownerId = getLeadAssigneeId(leadItem);
+                  const ownerLabel = ownerId
+                    ? leadItem.assignedTo?.name || 'Team Member'
+                    : 'Unassigned';
+                  const isAssignedToCurrentMgr = Boolean(
+                    currentManagerId && ownerId === currentManagerId
+                  );
+
                   return (
                     <label
                       key={leadItem.id}
@@ -261,12 +485,10 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
                     >
                       <div className="flex items-start gap-3">
                         <input
-                          type="radio"
-                          name="selectedLeadForReassign"
-                          value={leadItem.id}
+                          type="checkbox"
                           checked={isSelected}
-                          onChange={() => setSelectedLeadId(leadItem.id)}
-                          className="mt-1 text-brand-primary focus:ring-brand-primary"
+                          onChange={() => toggleLeadSelection(leadItem.id)}
+                          className="mt-1 rounded border-slate-300 text-brand-primary focus:ring-brand-primary"
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between gap-2">
@@ -292,14 +514,34 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
                             <span>
                               Stage:{' '}
                               <strong className="text-content-secondary">
-                                {leadItem.currentStage || 'FOLLOW_UP'}
+                                {getWorkflowStageMeta(leadItem.currentStage).label}
                               </strong>
                             </span>
+                            {getFollowUpOutcomeMeta(leadItem.lastFollowUpOutcome) && (
+                              <>
+                                <span>•</span>
+                                <span
+                                  className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold border ${
+                                    getFollowUpOutcomeMeta(leadItem.lastFollowUpOutcome)!.badgeCls
+                                  }`}
+                                >
+                                  {getFollowUpOutcomeMeta(leadItem.lastFollowUpOutcome)!.label}
+                                </span>
+                              </>
+                            )}
                             <span>•</span>
                             <span>
                               Current:{' '}
-                              <strong className="text-emerald-700">
-                                Assigned to You
+                              <strong
+                                className={
+                                  !ownerId
+                                    ? 'text-amber-700'
+                                    : isAssignedToCurrentMgr
+                                    ? 'text-emerald-700'
+                                    : 'text-brand-primary'
+                                }
+                              >
+                                {isAssignedToCurrentMgr ? `${ownerLabel} (Manager)` : ownerLabel}
                               </strong>
                             </span>
                           </div>
@@ -316,7 +558,7 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
           <div className="flex items-start gap-2.5 p-3 rounded-lg bg-blue-50/60 border border-blue-100 text-xs text-blue-800">
             <ShieldCheck className="w-4 h-4 shrink-0 text-brand-primary mt-0.5" />
             <div className="leading-relaxed">
-              Reassignment automatically logs an activity event in the lead's history and delivers an immediate in-app notification to the newly assigned agent.
+              Every assignment automatically logs an audit entry in the lead timeline and sends an instant notification to the target sales agent.
             </div>
           </div>
 
@@ -346,12 +588,16 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
               disabled={
                 isSubmitting ||
                 !selectedAgentId ||
-                !selectedLeadId ||
-                eligibleLeads.length === 0
+                selectedLeadIds.length === 0 ||
+                filteredLeads.length === 0
               }
               icon={<ArrowRight className="w-4 h-4" />}
             >
-              {isSubmitting ? 'Reassigning...' : 'Confirm Reassignment'}
+              {isSubmitting
+                ? 'Reassigning...'
+                : selectedLeadIds.length > 1
+                ? `Assign ${selectedLeadIds.length} Selected Leads`
+                : 'Confirm Reassignment'}
             </Button>
           </div>
         </form>

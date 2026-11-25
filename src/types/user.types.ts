@@ -4,6 +4,7 @@ export interface EmployeeProfile {
   id: string;
   name: string;
   email: string;
+  phone?: string | null;
   role: UserRole;
   isActive: boolean;
   isTeamActive?: boolean;
@@ -11,6 +12,7 @@ export interface EmployeeProfile {
   hasGoogleLinked: boolean;
   managerId?: string | null;
   managerName?: string | null;
+  managerRole?: UserRole | null;
   assignedPropertyIds?: string[];
   assignedProperties?: { id: string; name: string }[];
   createdAt: string;
@@ -20,6 +22,7 @@ export interface EmployeeProfile {
 export interface CreateEmployeeInput {
   name: string;
   email: string;
+  phone?: string | null;
   role: 'MANAGER' | 'SALES';
   temporaryPassword: string;
   managerId?: string | null;
@@ -28,6 +31,7 @@ export interface CreateEmployeeInput {
 
 export interface UpdateEmployeeInput {
   name?: string;
+  phone?: string | null;
   role?: 'MANAGER' | 'SALES';
   managerId?: string | null;
   temporaryPassword?: string;

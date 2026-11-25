@@ -19,9 +19,27 @@ import { ErrorState } from '../../../components/ui/ErrorState.js';
 import { NewLeadItem, DashboardPeriod } from '../types/dashboard.types.js';
 import { matchesTableFilters } from '../utils/dashboardFilters.js';
 import { AuthContext } from '../../../context/AuthContext.js';
+import { QuickCallLogModal } from './QuickCallLogModal.js';
+import {
+  FOLLOW_UP_OUTCOME_META,
+  formatFollowUpScheduleLabel,
+  getFollowUpOutcomeMeta,
+  getWorkflowStageMeta,
+} from '../../../utils/followUpOutcome.js';
+
+export interface NewLeadServerPagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  pageSizeOptions?: number[];
+  onPageChange: (page: number) => void;
+  onPageSizeChange?: (limit: number) => void;
+}
 
 export interface NewLeadTableProps {
   leads: NewLeadItem[];
+  title?: string;
   isLoading?: boolean;
   error?: string | null;
   isDemoMode?: boolean;
@@ -31,10 +49,13 @@ export interface NewLeadTableProps {
   onFollowUpClick: (lead: NewLeadItem) => void;
   onShowNotice: (action: string) => void;
   hideAgentFilter?: boolean;
+  initialStageFilter?: string;
+  serverPagination?: NewLeadServerPagination;
 }
 
 export const NewLeadTable: React.FC<NewLeadTableProps> = ({
   leads,
+  title = 'New Lead',
   isLoading = false,
   error = null,
   selectedPeriod,
@@ -43,18 +64,34 @@ export const NewLeadTable: React.FC<NewLeadTableProps> = ({
   onFollowUpClick,
   onShowNotice,
   hideAgentFilter,
+  initialStageFilter,
+  serverPagination,
 }) => {
   const auth = useContext(AuthContext);
   const isSalesUser = hideAgentFilter ?? (auth?.user?.role === 'SALES');
 
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState<boolean>(false);
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState<boolean>(
+    Boolean(initialStageFilter && initialStageFilter !== 'ALL')
+  );
+  const [quickLogLead, setQuickLogLead] = useState<NewLeadItem | null>(null);
 
   // Table filter criteria state
-  const [stageFilter, setStageFilter] = useState<string>('ALL');
+  const [stageFilter, setStageFilter] = useState<string>(initialStageFilter || 'ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [agentFilter, setAgentFilter] = useState<string>('ALL');
   const [followUpFilter, setFollowUpFilter] = useState<string>('ALL');
+  const [outcomeFilter, setOutcomeFilter] = useState<string>('ALL');
+
+  useEffect(() => {
+    if (initialStageFilter) {
+      setStageFilter(initialStageFilter);
+      setCurrentPage(1);
+      if (initialStageFilter !== 'ALL') {
+        setIsFilterPanelOpen(true);
+      }
+    }
+  }, [initialStageFilter]);
 
   // Compute distinct assigned agents present in the current leads dataset
   const distinctAgents = useMemo(() => {
@@ -76,7 +113,8 @@ export const NewLeadTable: React.FC<NewLeadTableProps> = ({
     (stageFilter !== 'ALL' ? 1 : 0) +
     (statusFilter !== 'ALL' ? 1 : 0) +
     (!isSalesUser && agentFilter !== 'ALL' ? 1 : 0) +
-    (followUpFilter !== 'ALL' ? 1 : 0);
+    (followUpFilter !== 'ALL' ? 1 : 0) +
+    (outcomeFilter !== 'ALL' ? 1 : 0);
   const hasActiveTableFilters = activeFiltersCount > 0;
 
   // Reset table filters to initial default state
@@ -85,6 +123,7 @@ export const NewLeadTable: React.FC<NewLeadTableProps> = ({
     setStatusFilter('ALL');
     setAgentFilter('ALL');
     setFollowUpFilter('ALL');
+    setOutcomeFilter('ALL');
     setCurrentPage(1);
   };
 
@@ -96,22 +135,52 @@ export const NewLeadTable: React.FC<NewLeadTableProps> = ({
         status: statusFilter,
         agent: isSalesUser ? 'ALL' : agentFilter,
         followUp: followUpFilter,
+        outcome: outcomeFilter,
       })
     );
-  }, [leads, stageFilter, statusFilter, agentFilter, followUpFilter, isSalesUser]);
+  }, [leads, stageFilter, statusFilter, agentFilter, followUpFilter, outcomeFilter, isSalesUser]);
 
-  // Reset page to 1 whenever filters change or source leads change
+  // Reset page to 1 whenever filters or source leads change
   useEffect(() => {
     setCurrentPage(1);
-  }, [stageFilter, statusFilter, agentFilter, followUpFilter, leads]);
+  }, [stageFilter, statusFilter, agentFilter, followUpFilter, outcomeFilter, leads]);
 
-  // Pagination parameters calculated against displayedLeads
-  const pageSize = 10;
-  const totalPages = Math.max(1, Math.ceil(displayedLeads.length / pageSize));
-  const safeCurrentPage = Math.min(currentPage, totalPages);
-  const startIdx = displayedLeads.length === 0 ? 0 : (safeCurrentPage - 1) * pageSize + 1;
-  const endIdx = Math.min(safeCurrentPage * pageSize, displayedLeads.length);
-  const pageNumbers = Array.from({ length: totalPages }, (_, i) => i + 1);
+  // Pagination parameters (server-driven when serverPagination is provided, else local displayedLeads)
+  const pageSize = serverPagination ? serverPagination.limit : 10;
+  const totalRowsCount = serverPagination ? serverPagination.total : displayedLeads.length;
+  const totalPages = serverPagination
+    ? Math.max(1, serverPagination.totalPages)
+    : Math.max(1, Math.ceil(displayedLeads.length / pageSize));
+  const safeCurrentPage = serverPagination
+    ? Math.min(Math.max(1, serverPagination.page), totalPages)
+    : Math.min(currentPage, totalPages);
+  const startIdx = totalRowsCount === 0 ? 0 : (safeCurrentPage - 1) * pageSize + 1;
+  const endIdx = serverPagination
+    ? Math.min(safeCurrentPage * pageSize, totalRowsCount)
+    : Math.min(safeCurrentPage * pageSize, displayedLeads.length);
+  const windowStart = Math.max(1, safeCurrentPage - 2);
+  const windowEnd = Math.min(totalPages, windowStart + 4);
+  const adjustedStart = Math.max(1, windowEnd - 4);
+  const pageNumbers = Array.from(
+    { length: windowEnd - adjustedStart + 1 },
+    (_, i) => adjustedStart + i
+  );
+  const paginatedRows = useMemo(
+    () =>
+      serverPagination
+        ? displayedLeads
+        : displayedLeads.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize),
+    [serverPagination, displayedLeads, safeCurrentPage, pageSize]
+  );
+
+  const handlePageSelect = (nextPage: number) => {
+    const clamped = Math.max(1, Math.min(totalPages, nextPage));
+    if (serverPagination) {
+      serverPagination.onPageChange(clamped);
+    } else {
+      setCurrentPage(clamped);
+    }
+  };
 
   return (
     <Card className="mb-6" noPadding>
@@ -120,10 +189,10 @@ export const NewLeadTable: React.FC<NewLeadTableProps> = ({
         <div className="flex items-center gap-3">
           <span className="h-2.5 w-2.5 rounded-full bg-brand-primary shrink-0" aria-hidden="true" />
           <h2 className="text-base sm:text-lg font-bold text-content-primary">
-            New Lead
+            {title}
           </h2>
           <StatusBadge
-            label={`${displayedLeads.length} Enquiries`}
+            label={`${serverPagination ? serverPagination.total : displayedLeads.length} Enquiries`}
             variant="primary"
           />
           {hasActiveTableFilters && (
@@ -244,6 +313,27 @@ export const NewLeadTable: React.FC<NewLeadTableProps> = ({
             </select>
           </div>
 
+          {/* Follow-up Outcome */}
+          <div className="flex flex-col gap-1 min-w-[165px]">
+            <label htmlFor="filter-lead-outcome" className="text-[10px] font-bold uppercase tracking-wider text-content-muted">
+              Follow-up Outcome
+            </label>
+            <select
+              id="filter-lead-outcome"
+              value={outcomeFilter}
+              onChange={(e) => setOutcomeFilter(e.target.value)}
+              className="px-2.5 py-1.5 bg-surface-card border border-edge rounded-lg text-content-primary text-xs focus:outline-hidden focus:ring-1 focus:ring-brand-primary"
+            >
+              <option value="ALL">All Outcomes</option>
+              <option value="__NONE__">Pending First Call</option>
+              {Object.values(FOLLOW_UP_OUTCOME_META).map((meta) => (
+                <option key={meta.value} value={meta.value}>
+                  {meta.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Clear / Reset Filters Action */}
           {hasActiveTableFilters && (
             <div className="pb-0.5">
@@ -279,7 +369,11 @@ export const NewLeadTable: React.FC<NewLeadTableProps> = ({
         ) : (
           <EmptyState
             title="No New Leads"
-            description="There are currently no new unassigned enquiries in your operational queue."
+            description={
+              serverPagination
+                ? 'There are currently no active assigned leads matching the selected filters.'
+                : 'There are currently no new enquiries in your operational queue.'
+            }
           />
         )
       ) : displayedLeads.length === 0 ? (
@@ -311,8 +405,8 @@ export const NewLeadTable: React.FC<NewLeadTableProps> = ({
                   <th scope="col" className="py-3.5 px-3 min-w-[90px]">
                     Status
                   </th>
-                  <th scope="col" className="py-3.5 px-3 min-w-[150px]">
-                    Next Follow-up
+                  <th scope="col" className="py-3.5 px-3 min-w-[190px]">
+                    Follow-up Outcome &amp; Next Follow-up
                   </th>
                   <th scope="col" className="py-3.5 pl-3 pr-6 text-right min-w-[140px]">
                     Action
@@ -320,26 +414,21 @@ export const NewLeadTable: React.FC<NewLeadTableProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-edge-subtle">
-                {displayedLeads
-                  .slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize)
-                  .map((lead) => {
-                    const stageBadge = (() => {
-                      switch (lead.currentStage) {
-                        case 'MEETING_PLAN':
-                          return { label: '02. Meeting Plan', cls: 'bg-purple-50 text-purple-700 border-purple-200' };
-                        case 'SITE_VISIT_PLAN':
-                          return { label: '03. Site Visit Plan', cls: 'bg-amber-50 text-amber-700 border-amber-200' };
-                        case 'DEAL_DONE':
-                          return { label: '04. Deal Done', cls: 'bg-emerald-50 text-emerald-800 border-emerald-300 font-bold' };
-                        case 'FOLLOW_UP':
-                        default:
-                          return { label: '01. Follow-up', cls: 'bg-blue-50 text-brand-primary border-blue-200' };
-                      }
-                    })();
-
-                    const nextFollowUpFormatted = lead.nextFollowUpDate
-                      ? `${new Date(lead.nextFollowUpDate).toLocaleDateString()} ${lead.nextFollowUpTime || ''}`.trim()
-                      : null;
+                {paginatedRows.map((lead) => {
+                    const stageBadge = getWorkflowStageMeta(lead.currentStage);
+                    const outcomeMeta = getFollowUpOutcomeMeta(lead.lastFollowUpOutcome);
+                    const nextFollowUpFormatted = formatFollowUpScheduleLabel(
+                      lead.nextFollowUpDate,
+                      lead.nextFollowUpTime
+                    );
+                    const activitySource = lead.lastFollowUpAt || lead.updatedAt || lead.createdAt;
+                    const lastTriedFormatted =
+                      activitySource && !isNaN(new Date(activitySource).getTime())
+                        ? new Date(activitySource).toLocaleDateString('en-IN', {
+                            day: '2-digit',
+                            month: 'short',
+                          })
+                        : null;
 
                     const actionButtonText = lead.currentStage === 'DEAL_DONE'
                       ? 'View Deal'
@@ -395,9 +484,19 @@ export const NewLeadTable: React.FC<NewLeadTableProps> = ({
                                   </span>
                                 )}
                                 {lead.assignedTo ? (
-                                  <span className="inline-flex items-center bg-blue-50 text-brand-primary px-1.5 py-0.2 rounded border border-blue-100">
-                                    {lead.assignedTo.name}
-                                  </span>
+                                  <>
+                                    <span className="inline-flex items-center bg-blue-50 text-brand-primary px-1.5 py-0.2 rounded border border-blue-100">
+                                      {lead.assignedTo.name}
+                                    </span>
+                                    {!isSalesUser && lead.assignedTo.managerName && (
+                                      <span
+                                        className="inline-flex items-center bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded border border-slate-200"
+                                        title={`Reporting Manager: ${lead.assignedTo.managerName}`}
+                                      >
+                                        Mgr: {lead.assignedTo.managerName}
+                                      </span>
+                                    )}
+                                  </>
                                 ) : (
                                   <span className="inline-flex items-center bg-amber-50 text-amber-700 px-1.5 py-0.2 rounded border border-amber-200 font-medium">
                                     Unassigned
@@ -435,29 +534,69 @@ export const NewLeadTable: React.FC<NewLeadTableProps> = ({
                           </span>
                         </td>
 
-                        {/* 6. Next Follow-up */}
+                        {/* 6. Follow-up Outcome & Next Follow-up */}
                         <td className="py-3.5 px-3 text-xs">
-                          {nextFollowUpFormatted ? (
-                            <div className="flex items-center gap-1 text-blue-900 font-medium">
-                              <Calendar className="h-3 w-3 text-brand-primary shrink-0" />
-                              <span>{nextFollowUpFormatted}</span>
-                            </div>
-                          ) : (
-                            <span className="text-content-muted italic text-[11px]">None scheduled</span>
-                          )}
+                          <div className="flex flex-col items-start gap-1">
+                            {outcomeMeta ? (
+                              <span
+                                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border ${outcomeMeta.badgeCls}`}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${outcomeMeta.dotCls}`} />
+                                <span>{outcomeMeta.label}</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                                Pending First Call
+                              </span>
+                            )}
+
+                            {nextFollowUpFormatted ? (
+                              <div className="flex flex-col gap-0.5">
+                                <div className="flex items-center gap-1 text-[11px] text-blue-900 font-medium">
+                                  <Calendar className="h-3 w-3 text-brand-primary shrink-0" />
+                                  <span>Next: {nextFollowUpFormatted}</span>
+                                </div>
+                                {lastTriedFormatted && (
+                                  <span className="text-[10px] text-content-muted">
+                                    Last activity {lastTriedFormatted}
+                                  </span>
+                                )}
+                              </div>
+                            ) : lastTriedFormatted ? (
+                              <span className="text-[11px] text-content-muted">
+                                Last activity {lastTriedFormatted}
+                              </span>
+                            ) : (
+                              <span className="text-content-muted italic text-[11px]">No callback scheduled</span>
+                            )}
+                          </div>
                         </td>
 
                         {/* 7. Action Button */}
                         <td className="py-3.5 pl-3 pr-6 text-right">
-                          <Button
-                            size="sm"
-                            variant={lead.currentStage === 'DEAL_DONE' ? 'outline' : 'primary'}
-                            icon={actionIcon}
-                            onClick={() => onFollowUpClick(lead)}
-                            className="py-1 px-3 text-xs shadow-xs"
-                          >
-                            {actionButtonText}
-                          </Button>
+                          <div className="inline-flex items-center justify-end gap-1.5">
+                            {lead.status !== 'CLOSED' && lead.currentStage !== 'DEAL_DONE' && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                icon={<PhoneCall className="h-3 w-3 text-amber-600" />}
+                                onClick={() => setQuickLogLead(lead)}
+                                title="Log quick call attempt (Busy, Switched Off, Callback, Connected)"
+                                className="py-1 px-2.5 text-xs border-amber-200 text-amber-800 hover:bg-amber-50"
+                              >
+                                Log Call
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant={lead.currentStage === 'DEAL_DONE' ? 'outline' : 'primary'}
+                              icon={actionIcon}
+                              onClick={() => onFollowUpClick(lead)}
+                              className="py-1 px-3 text-xs shadow-xs"
+                            >
+                              {actionButtonText}
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -468,29 +607,53 @@ export const NewLeadTable: React.FC<NewLeadTableProps> = ({
 
           {/* Table Footer: Pagination & Counts */}
           <div className="p-3.5 sm:px-6 border-t border-edge flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-content-muted">
-            <div>
-              Showing <span className="font-semibold text-content-primary">{startIdx}</span> to{' '}
-              <span className="font-semibold text-content-primary">{endIdx}</span> of{' '}
-              <span className="font-semibold text-content-primary">{displayedLeads.length}</span> new leads
+            <div className="flex flex-wrap items-center gap-3">
+              <div>
+                Showing <span className="font-semibold text-content-primary">{startIdx}</span> to{' '}
+                <span className="font-semibold text-content-primary">{endIdx}</span> of{' '}
+                <span className="font-semibold text-content-primary">
+                  {serverPagination ? serverPagination.total : displayedLeads.length}
+                </span>{' '}
+                {serverPagination ? 'assigned leads' : 'new leads'}
+              </div>
+              {serverPagination?.onPageSizeChange && (
+                <div className="inline-flex items-center gap-1.5">
+                  <span>Show:</span>
+                  {(serverPagination.pageSizeOptions || [10, 25, 50]).map((opt) => (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => serverPagination.onPageSizeChange?.(opt)}
+                      className={`px-2 py-0.5 rounded border text-[11px] font-semibold transition-colors ${
+                        pageSize === opt
+                          ? 'bg-brand-primary text-white border-brand-primary'
+                          : 'bg-surface-subtle text-content-secondary border-edge hover:bg-surface-table-hover'
+                      }`}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-1">
               <button
                 type="button"
                 disabled={safeCurrentPage <= 1}
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                onClick={() => handlePageSelect(safeCurrentPage - 1)}
                 className="p-1 rounded border border-edge hover:bg-surface-subtle disabled:opacity-40 disabled:cursor-not-allowed"
                 aria-label="Previous page"
               >
                 <ChevronLeft className="h-3.5 w-3.5" />
               </button>
 
-              {pageNumbers.slice(0, 5).map((pageNum) => (
+              {pageNumbers.map((pageNum) => (
                 <button
                   key={pageNum}
                   type="button"
-                  onClick={() => setCurrentPage(pageNum)}
-                  className={`h-7 w-7 rounded border text-xs font-medium transition-colors ${
+                  onClick={() => handlePageSelect(pageNum)}
+                  className={`h-7 min-w-7 px-1.5 rounded border text-xs font-medium transition-colors ${
                     safeCurrentPage === pageNum
                       ? 'bg-brand-primary text-white border-brand-primary font-bold'
                       : 'border-edge hover:bg-surface-subtle text-content-secondary'
@@ -505,7 +668,7 @@ export const NewLeadTable: React.FC<NewLeadTableProps> = ({
               <button
                 type="button"
                 disabled={safeCurrentPage >= totalPages}
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                onClick={() => handlePageSelect(safeCurrentPage + 1)}
                 className="p-1 rounded border border-edge hover:bg-surface-subtle disabled:opacity-40 disabled:cursor-not-allowed"
                 aria-label="Next page"
               >
@@ -515,6 +678,19 @@ export const NewLeadTable: React.FC<NewLeadTableProps> = ({
           </div>
         </>
       )}
+
+      <QuickCallLogModal
+        lead={quickLogLead}
+        isOpen={Boolean(quickLogLead)}
+        onClose={() => setQuickLogLead(null)}
+        onLogged={() => {
+          if (onRetry) {
+            onRetry();
+          } else {
+            onShowNotice('Call attempt logged successfully.');
+          }
+        }}
+      />
     </Card>
   );
 };

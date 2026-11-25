@@ -180,3 +180,97 @@ test("Manager Team Page: Integrates AssignAgentModal and membership controls", (
   assert.ok(teamContent.includes("Deactivate"), "ManagerTeamPage has Deactivate team membership action");
   assert.ok(teamContent.includes("handleDeactivateMembership"), "ManagerTeamPage defines handleDeactivateMembership");
 });
+
+test("Manager Lead Assignment Enhancements: ReassignLeadModal, AssignLeadsPage & Team Onboarding", () => {
+  // 1. ReassignLeadModal excludes target agent leads, shows real owner, filters & multi-select
+  const reassignPath = path.join(__dirname, "../src/features/manager/components/ReassignLeadModal.tsx");
+  const reassignContent = fs.readFileSync(reassignPath, "utf-8");
+  assert.ok(
+    reassignContent.includes("getLeadAssigneeId(item) !== selectedAgentId"),
+    "ReassignLeadModal filters out leads already assigned to selectedAgentId"
+  );
+  assert.ok(
+    reassignContent.includes("SELECT LEAD TO REASSIGN (") && reassignContent.includes("AVAILABLE)"),
+    "ReassignLeadModal displays dynamic available lead count"
+  );
+  assert.ok(
+    !reassignContent.includes("Assigned to You"),
+    "ReassignLeadModal replaces misleading hardcoded 'Assigned to You' label"
+  );
+  assert.ok(reassignContent.includes("Unassigned Only"), "ReassignLeadModal includes Unassigned Only filter pill");
+  assert.ok(reassignContent.includes("From Other Agents"), "ReassignLeadModal includes From Other Agents filter pill");
+  assert.ok(reassignContent.includes('type="checkbox"'), "ReassignLeadModal supports multi-select checkboxes");
+  assert.ok(reassignContent.includes("bulkAssignLeads"), "ReassignLeadModal supports bulk assignment");
+
+  // 2. Standalone Assign Leads nav item removed & consolidated into LeadsPage tabs
+  const sidebarContent = fs.readFileSync(
+    path.join(__dirname, "../src/components/layout/AppSidebar.tsx"),
+    "utf-8"
+  );
+  assert.ok(!sidebarContent.includes('name: "Assign Leads"'), "AppSidebar removes standalone Assign Leads nav item");
+  assert.ok(!sidebarContent.includes('path: "/manager/assign-leads"'), "AppSidebar removes /manager/assign-leads path");
+
+  const routesContent = fs.readFileSync(
+    path.join(__dirname, "../src/routes/AppRoutes.tsx"),
+    "utf-8"
+  );
+  assert.ok(routesContent.includes('path="manager/assign-leads"'), "AppRoutes keeps manager/assign-leads fallback redirect");
+  assert.ok(routesContent.includes('<Navigate to="/leads" replace />'), "AppRoutes redirects /manager/assign-leads to /leads");
+
+  const leadsPagePath = path.join(__dirname, "../src/features/leads/LeadsPage.tsx");
+  assert.ok(fs.existsSync(leadsPagePath), "LeadsPage.tsx exists");
+  const leadsPageContent = fs.readFileSync(leadsPagePath, "utf-8");
+  assert.ok(!leadsPageContent.includes("'/manager/assign-leads'"), "LeadsPage removes standalone Assign Leads header button");
+  assert.ok(
+    leadsPageContent.indexOf("<span>{canAccessUnassigned ? 'Assigned Leads' : 'Active Pipeline'}</span>") <
+      leadsPageContent.indexOf("<span>Unassigned Leads</span>"),
+    "LeadsPage renders Assigned Leads as the first tab before Unassigned Leads"
+  );
+  assert.ok(leadsPageContent.includes("assignedOnly: true"), "LeadsPage fetches assigned queue with assignedOnly: true");
+  assert.ok(leadsPageContent.includes("unassigned: false"), "LeadsPage enforces unassigned: false on Assigned Leads");
+  assert.ok(leadsPageContent.includes("unassigned: true"), "LeadsPage fetches unassigned queue with unassigned: true");
+  assert.ok(leadsPageContent.includes("assignedOnly: false"), "LeadsPage enforces assignedOnly: false on Unassigned Leads");
+  assert.ok(leadsPageContent.includes("hasValidAssignedUser"), "LeadsPage applies defensive assignedTo user guard on Assigned Leads");
+  assert.ok(leadsPageContent.includes("fetchTabBadgeCounts"), "LeadsPage fetches independent limit=1 tab badge counts");
+  assert.ok(leadsPageContent.includes("unassignedTotalCount") && leadsPageContent.includes("assignedTotalCount"), "LeadsPage tracks independent unassigned and assigned badge totals");
+  assert.ok(leadsPageContent.includes("serverPagination"), "LeadsPage wires server pagination for Unassigned & Assigned queues");
+  assert.ok(!leadsPageContent.includes("ReassignLeadModal"), "LeadsPage removes ReassignLeadModal from Assigned Leads tab");
+  assert.ok(!leadsPageContent.includes("onBulkReassignClick"), "LeadsPage removes bulk reassign from Assigned Leads tab");
+  assert.ok(leadsPageContent.includes("QuickCallLogModal") && leadsPageContent.includes("onFollowUpClick={handleOpenUnassignedFollowUp}"), "LeadsPage supports Log Call and Follow-up directly on Unassigned Leads");
+
+  const newLeadTableContent = fs.readFileSync(
+    path.join(__dirname, "../src/features/sales-dashboard/components/NewLeadTable.tsx"),
+    "utf-8"
+  );
+  assert.ok(!newLeadTableContent.includes("onReassignClick") && !newLeadTableContent.includes("onBulkReassignClick"), "NewLeadTable removes Reassign action and bulk-reassign bar");
+  assert.ok(newLeadTableContent.includes("Log Call") && newLeadTableContent.includes("Follow-up"), "NewLeadTable preserves Log Call and Follow-up actions");
+
+  const unassignedTableContent = fs.readFileSync(
+    path.join(__dirname, "../src/features/leads/components/UnassignedLeadTable.tsx"),
+    "utf-8"
+  );
+  assert.ok(
+    unassignedTableContent.includes("onLogCallClick") && unassignedTableContent.includes("Log Call") &&
+    unassignedTableContent.includes("onFollowUpClick") && unassignedTableContent.includes("Follow-up") &&
+    unassignedTableContent.includes("paginatedLeads.length > 0 && (totalCount > 0 || totalPages > 1)"),
+    "UnassignedLeadTable displays Log Call and Follow-up actions alongside Assign and hides pagination on 0 rows"
+  );
+
+  // 3. AssignAgentModal & ManagerTeamPage support Assign Initial Leads Now during team onboarding
+  const assignAgentContent = fs.readFileSync(
+    path.join(__dirname, "../src/features/manager/components/AssignAgentModal.tsx"),
+    "utf-8"
+  );
+  assert.ok(
+    assignAgentContent.includes("Assign Initial Leads Now"),
+    "AssignAgentModal includes optional Assign Initial Leads Now section"
+  );
+  assert.ok(
+    assignAgentContent.includes("selectedLeadIds"),
+    "AssignAgentModal supports multi-selecting initial leads"
+  );
+  assert.ok(
+    assignAgentContent.includes("enquiryService.assignAgentToTeam"),
+    "AssignAgentModal submits initial leads alongside assignAgentToTeam"
+  );
+});

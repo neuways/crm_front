@@ -1,9 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   UserCheck,
   Search,
   Filter,
   Phone,
+  PhoneCall,
+  ArrowRight,
   Mail,
   Building,
   Calendar,
@@ -16,6 +18,20 @@ import {
 import { IEnquiry } from '../../../types/enquiry.types.js';
 import { Button } from '../../../components/ui/Button.js';
 
+export interface UnassignedLeadServerPagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  searchTerm?: string;
+  onSearchChange?: (val: string) => void;
+  selectedReason?: string;
+  onReasonChange?: (val: string) => void;
+  pageSizeOptions?: number[];
+  onPageChange: (page: number) => void;
+  onPageSizeChange?: (limit: number) => void;
+}
+
 export interface UnassignedLeadTableProps {
   leads: IEnquiry[];
   isLoading: boolean;
@@ -23,6 +39,9 @@ export interface UnassignedLeadTableProps {
   onRetry: () => void;
   onAssignClick: (lead: IEnquiry) => void;
   onBulkAssignClick: (selectedLeads: IEnquiry[]) => void;
+  onFollowUpClick?: (lead: IEnquiry) => void;
+  onLogCallClick?: (lead: IEnquiry) => void;
+  serverPagination?: UnassignedLeadServerPagination;
 }
 
 export const UnassignedLeadTable: React.FC<UnassignedLeadTableProps> = ({
@@ -31,13 +50,23 @@ export const UnassignedLeadTable: React.FC<UnassignedLeadTableProps> = ({
   error,
   onRetry,
   onAssignClick,
-  onBulkAssignClick
+  onBulkAssignClick,
+  onFollowUpClick,
+  onLogCallClick,
+  serverPagination,
 }) => {
-  const [searchTerm, setSearchTerm] = useState<string>('');
-  const [selectedReason, setSelectedReason] = useState<string>('ALL');
+  const [localSearchTerm, setLocalSearchTerm] = useState<string>('');
+  const [localSelectedReason, setLocalSelectedReason] = useState<string>('ALL');
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const pageSize = 15;
+  const pageSize = serverPagination ? serverPagination.limit : 15;
+
+  const searchTerm =
+    serverPagination?.searchTerm !== undefined ? serverPagination.searchTerm : localSearchTerm;
+  const selectedReason =
+    serverPagination?.selectedReason !== undefined
+      ? serverPagination.selectedReason
+      : localSelectedReason;
 
   const UNASSIGNED_REASONS = [
     'Property/project not selected',
@@ -47,8 +76,11 @@ export const UnassignedLeadTable: React.FC<UnassignedLeadTableProps> = ({
     'Assignment pending manual review'
   ];
 
-  // Filtering
+  // Filtering (skipped when backend already filters + paginates)
   const filteredLeads = useMemo(() => {
+    if (serverPagination) {
+      return leads;
+    }
     return leads.filter((lead) => {
       // Reason filter
       if (selectedReason !== 'ALL') {
@@ -69,14 +101,35 @@ export const UnassignedLeadTable: React.FC<UnassignedLeadTableProps> = ({
 
       return true;
     });
-  }, [leads, selectedReason, searchTerm]);
+  }, [leads, selectedReason, searchTerm, serverPagination]);
 
   // Pagination
-  const totalPages = Math.ceil(filteredLeads.length / pageSize) || 1;
+  const totalCount = serverPagination ? serverPagination.total : filteredLeads.length;
+  const totalPages = serverPagination
+    ? Math.max(1, serverPagination.totalPages)
+    : Math.ceil(filteredLeads.length / pageSize) || 1;
+  const activePage = serverPagination ? Math.min(Math.max(1, serverPagination.page), totalPages) : currentPage;
   const paginatedLeads = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
+    if (serverPagination) {
+      return filteredLeads;
+    }
+    const start = (activePage - 1) * pageSize;
     return filteredLeads.slice(start, start + pageSize);
-  }, [filteredLeads, currentPage, pageSize]);
+  }, [filteredLeads, activePage, pageSize, serverPagination]);
+
+  useEffect(() => {
+    setSelectedLeadIds(new Set());
+  }, [leads]);
+
+  const handlePageChange = (nextPage: number) => {
+    const clamped = Math.max(1, Math.min(totalPages, nextPage));
+    setSelectedLeadIds(new Set());
+    if (serverPagination) {
+      serverPagination.onPageChange(clamped);
+    } else {
+      setCurrentPage(clamped);
+    }
+  };
 
   // Multi-select handlers
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -151,8 +204,13 @@ export const UnassignedLeadTable: React.FC<UnassignedLeadTableProps> = ({
             placeholder="Search unassigned leads by name, phone, project..."
             value={searchTerm}
             onChange={(e) => {
-              setSearchTerm(e.target.value);
-              setCurrentPage(1);
+              const val = e.target.value;
+              if (serverPagination?.onSearchChange) {
+                serverPagination.onSearchChange(val);
+              } else {
+                setLocalSearchTerm(val);
+                setCurrentPage(1);
+              }
             }}
             className="w-full pl-9 pr-3 py-2 text-xs bg-surface-subtle border border-edge rounded-xl focus:outline-none focus:border-brand-primary text-content-primary"
           />
@@ -166,17 +224,24 @@ export const UnassignedLeadTable: React.FC<UnassignedLeadTableProps> = ({
           <select
             value={selectedReason}
             onChange={(e) => {
-              setSelectedReason(e.target.value);
-              setCurrentPage(1);
+              const val = e.target.value;
+              if (serverPagination?.onReasonChange) {
+                serverPagination.onReasonChange(val);
+              } else {
+                setLocalSelectedReason(val);
+                setCurrentPage(1);
+              }
             }}
             className="text-xs bg-surface-subtle border border-edge rounded-xl px-3 py-2 text-content-primary focus:outline-none focus:border-brand-primary"
           >
-            <option value="ALL">All Reasons ({leads.length})</option>
+            <option value="ALL">
+              All Reasons ({serverPagination ? serverPagination.total : leads.length})
+            </option>
             {UNASSIGNED_REASONS.map((r) => {
               const count = leads.filter((l) => (l.unassignedReason || 'Assignment pending manual review') === r).length;
               return (
                 <option key={r} value={r}>
-                  {r} ({count})
+                  {serverPagination ? r : `${r} (${count})`}
                 </option>
               );
             })}
@@ -365,15 +430,39 @@ export const UnassignedLeadTable: React.FC<UnassignedLeadTableProps> = ({
 
                       {/* Action */}
                       <td className="py-3 px-4 text-right whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={() => onAssignClick(lead)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-brand-primary bg-brand-primary/10 hover:bg-brand-primary/20 border border-brand-primary/30 rounded-xl transition shadow-xs active:scale-95"
-                          title="Assign this lead to an agent"
-                        >
-                          <UserCheck className="w-3.5 h-3.5" />
-                          <span>Assign</span>
-                        </button>
+                        <div className="inline-flex items-center justify-end gap-1.5">
+                          {onLogCallClick && lead.status !== 'CLOSED' && (
+                            <button
+                              type="button"
+                              onClick={() => onLogCallClick(lead)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl transition shadow-xs"
+                              title="Log quick call attempt (Busy, Switched Off, Callback, Connected)"
+                            >
+                              <PhoneCall className="w-3 h-3 text-amber-600" />
+                              <span>Log Call</span>
+                            </button>
+                          )}
+                          {onFollowUpClick && (
+                            <button
+                              type="button"
+                              onClick={() => onFollowUpClick(lead)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-content-primary bg-surface-subtle hover:bg-slate-200/70 border border-edge rounded-xl transition shadow-xs"
+                              title="Open lead workflow and follow-up details"
+                            >
+                              <ArrowRight className="w-3 h-3 text-brand-primary" />
+                              <span>Follow-up</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => onAssignClick(lead)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-brand-primary bg-brand-primary/10 hover:bg-brand-primary/20 border border-brand-primary/30 rounded-xl transition shadow-xs active:scale-95"
+                            title="Assign this lead to an agent"
+                          >
+                            <UserCheck className="w-3.5 h-3.5" />
+                            <span>Assign</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -384,39 +473,66 @@ export const UnassignedLeadTable: React.FC<UnassignedLeadTableProps> = ({
         )}
 
         {/* Pagination Footer */}
-        {totalPages > 1 && (
+        {paginatedLeads.length > 0 && (totalCount > 0 || totalPages > 1) && (
           <div className="p-4 border-t border-edge flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-content-muted">
-            <div>
-              Showing <strong className="text-content-primary">{(currentPage - 1) * pageSize + 1}</strong> to{' '}
-              <strong className="text-content-primary">
-                {Math.min(currentPage * pageSize, filteredLeads.length)}
-              </strong>{' '}
-              of <strong className="text-content-primary">{filteredLeads.length}</strong> unassigned leads
+            <div className="flex flex-wrap items-center gap-3">
+              <div>
+                Showing{' '}
+                <strong className="text-content-primary">
+                  {totalCount === 0 ? 0 : (activePage - 1) * pageSize + 1}
+                </strong>{' '}
+                to{' '}
+                <strong className="text-content-primary">
+                  {Math.min(activePage * pageSize, totalCount)}
+                </strong>{' '}
+                of <strong className="text-content-primary">{totalCount}</strong> unassigned leads
+              </div>
+              {serverPagination?.onPageSizeChange && (
+                <div className="inline-flex items-center gap-1.5">
+                  <span>Show:</span>
+                  {(serverPagination.pageSizeOptions || [10, 25, 50]).map((opt) => (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => serverPagination.onPageSizeChange?.(opt)}
+                      className={`px-2 py-0.5 rounded border text-[11px] font-semibold transition ${
+                        pageSize === opt
+                          ? 'bg-brand-primary text-white border-brand-primary'
+                          : 'bg-surface-subtle text-content-secondary border-edge hover:bg-surface-table-hover'
+                      }`}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
-            <div className="flex items-center gap-1.5">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={currentPage <= 1 || isLoading}
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              >
-                <ChevronLeft className="w-4 h-4" />
-                <span>Previous</span>
-              </Button>
-              <span className="px-2 text-content-primary font-medium">
-                {currentPage} / {totalPages}
-              </span>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={currentPage >= totalPages || isLoading}
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              >
-                <span>Next</span>
-                <ChevronRight className="w-4 h-4" />
-              </Button>
-            </div>
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={activePage <= 1 || isLoading}
+                  onClick={() => handlePageChange(activePage - 1)}
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  <span>Previous</span>
+                </Button>
+                <span className="px-2 text-content-primary font-medium">
+                  Page {activePage} of {totalPages}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={activePage >= totalPages || isLoading}
+                  onClick={() => handlePageChange(activePage + 1)}
+                >
+                  <span>Next</span>
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>

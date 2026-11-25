@@ -9,6 +9,7 @@ export interface UserProfile {
   id: string;
   name: string;
   email: string;
+  phone?: string | null;
   role: UserRole;
   isActive?: boolean;
   mustChangePassword?: boolean;
@@ -26,6 +27,7 @@ export interface LoginResponseData {
     id: string;
     name: string;
     email: string;
+    phone?: string | null;
     role: UserRole;
     mustChangePassword?: boolean;
   };

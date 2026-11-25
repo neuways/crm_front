@@ -16,6 +16,15 @@ import { test } from "node:test";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  getFollowUpOutcomeMeta,
+  formatFollowUpScheduleLabel,
+  getWorkflowStageMeta,
+} from "../src/utils/followUpOutcome.js";
+import {
+  matchesGlobalFilter,
+  matchesTableFilters,
+} from "../src/features/sales-dashboard/utils/dashboardFilters.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -179,21 +188,26 @@ test("Workflow Step 1 & Step 2 Completion Invariants: Code structure", () => {
 });
 
 test("Workflow Invariant Logic: Rigorous verification of Step 1 & Step 2 status transitions", () => {
-  // Pure logic replica of LeadWorkflowPage completion logic
+  // Pure logic replica of LeadWorkflowPage completion logic (strict Step 1 outcome gating)
   function computeStepStatus(
-    lead: { currentStage: string; meetingPlan?: { isCompleted?: boolean } } | null,
-    historyList: Array<{ status?: string; isInitialTask?: boolean; notes?: string }>,
-    activityList: Array<{ metadata?: { step?: string }; activityType?: string }>
+    lead: { currentStage: string; lastFollowUpOutcome?: string; meetingPlan?: { isCompleted?: boolean } } | null,
+    historyList: Array<{ status?: string; outcome?: string; isInitialTask?: boolean; notes?: string }>,
+    activityList: Array<{ metadata?: { step?: string; outcome?: string }; activityType?: string }>
   ) {
     const hasCompletedDiscussion = Boolean(
-      historyList.some(
-        (t) =>
-          t.status === 'COMPLETED' ||
-          (!t.isInitialTask && t.notes && t.notes !== 'System initialized pending follow-up task')
-      ) ||
-      activityList.some(
-        (a) => a.metadata?.step === 'FOLLOW_UP' || a.activityType === 'FOLLOW_UP_COMPLETED'
-      )
+      lead?.lastFollowUpOutcome
+        ? lead.lastFollowUpOutcome === 'MEETING_SCHEDULED'
+        : historyList.some(
+            (t) =>
+              t.outcome === 'MEETING_SCHEDULED' &&
+              (t.status === 'COMPLETED' ||
+                (!t.isInitialTask && t.notes && t.notes !== 'System initialized pending follow-up task'))
+          ) ||
+          activityList.some(
+            (a) =>
+              (a.metadata?.step === 'FOLLOW_UP' || a.activityType === 'FOLLOW_UP_COMPLETED') &&
+              a.metadata?.outcome === 'MEETING_SCHEDULED'
+          )
     );
     const isStep1Done = Boolean(lead && (lead.currentStage !== 'FOLLOW_UP' || hasCompletedDiscussion));
     const isMeetingUnlocked = Boolean(isStep1Done);
@@ -216,14 +230,26 @@ test("Workflow Invariant Logic: Rigorous verification of Step 1 & Step 2 status 
   assert.strictEqual(freshStatus.isMeetingUnlocked, false, "Step 2 must be LOCKED on initial load");
   assert.strictEqual(freshStatus.isMeetingCompletedFinal, false, "Step 2 must NOT be completed");
 
-  // Case 2: User saves discussion only (stage remains FOLLOW_UP, COMPLETED task added)
-  const savedDiscussionHistory = [
-    { notes: 'Spoke with client, interested in 3BHK', status: 'COMPLETED', isInitialTask: false },
+  // Case 2a: User logs non-meeting outcome (CALL_BACK_REQUESTED / NO_ANSWER / CONNECTED) -> Step 2 remains LOCKED
+  const callbackLead = { currentStage: 'FOLLOW_UP', lastFollowUpOutcome: 'CALL_BACK_REQUESTED' };
+  const callbackHistory = [
+    { notes: 'Client asked for callback tomorrow', status: 'COMPLETED', outcome: 'CALL_BACK_REQUESTED', isInitialTask: false },
     { notes: 'System initialized pending follow-up task', status: 'PENDING', isInitialTask: true }
   ];
-  const savedStatus = computeStepStatus(freshLead, savedDiscussionHistory, []);
-  assert.strictEqual(savedStatus.isStep1Done, true, "Step 1 must be DONE after saving discussion");
-  assert.strictEqual(savedStatus.isMeetingUnlocked, true, "Step 2 must be UNLOCKED after saving discussion");
+  const callbackStatus = computeStepStatus(callbackLead, callbackHistory, []);
+  assert.strictEqual(callbackStatus.isStep1Done, false, "Step 1 must NOT unlock Step 2 on CALL_BACK_REQUESTED");
+  assert.strictEqual(callbackStatus.isMeetingUnlocked, false, "Step 2 must remain LOCKED until Meeting Agreed");
+  assert.strictEqual(callbackStatus.isMeetingCompletedFinal, false, "Step 2 must remain PENDING");
+
+  // Case 2b: User logs Meeting Agreed (MEETING_SCHEDULED) -> Step 2 UNLOCKED
+  const meetingAgreedLead = { currentStage: 'FOLLOW_UP', lastFollowUpOutcome: 'MEETING_SCHEDULED' };
+  const savedDiscussionHistory = [
+    { notes: 'Spoke with client, meeting agreed for Friday', status: 'COMPLETED', outcome: 'MEETING_SCHEDULED', isInitialTask: false },
+    { notes: 'System initialized pending follow-up task', status: 'PENDING', isInitialTask: true }
+  ];
+  const savedStatus = computeStepStatus(meetingAgreedLead, savedDiscussionHistory, []);
+  assert.strictEqual(savedStatus.isStep1Done, true, "Step 1 must be DONE when Meeting Agreed");
+  assert.strictEqual(savedStatus.isMeetingUnlocked, true, "Step 2 must be UNLOCKED when Meeting Agreed");
   assert.strictEqual(savedStatus.isMeetingCompletedFinal, false, "Step 2 must remain PENDING (not completed)");
 
   // Case 3: User saves and advances to MEETING_PLAN
@@ -247,4 +273,145 @@ test("Workflow Invariant Logic: Rigorous verification of Step 1 & Step 2 status 
   const emptyStatus = computeStepStatus(freshLead, [], []);
   assert.strictEqual(emptyStatus.isStep1Done, false, "Step 1 must be PENDING with empty history");
   assert.strictEqual(emptyStatus.isMeetingUnlocked, false, "Step 2 must be LOCKED with empty history");
+});
+
+test("Step 1 Outcome Gating & Visibility: LeadWorkflowPage, FollowUpModal, and NewLeadTable enforce Meeting Agreed gate", () => {
+  const workflowContent = fs.readFileSync(
+    path.join(__dirname, "../src/features/sales-dashboard/LeadWorkflowPage.tsx"),
+    "utf-8"
+  );
+  const modalContent = fs.readFileSync(
+    path.join(__dirname, "../src/features/sales-dashboard/components/FollowUpModal.tsx"),
+    "utf-8"
+  );
+  const tableContent = fs.readFileSync(
+    path.join(__dirname, "../src/features/sales-dashboard/components/NewLeadTable.tsx"),
+    "utf-8"
+  );
+
+  // Strict Step 1 -> Step 2 advancement gate in both LeadWorkflowPage and FollowUpModal
+  assert.ok(
+    workflowContent.includes("outcome !== 'MEETING_SCHEDULED'"),
+    "LeadWorkflowPage gates Save & Advance behind MEETING_SCHEDULED"
+  );
+  assert.ok(
+    modalContent.includes("outcome !== 'MEETING_SCHEDULED'"),
+    "FollowUpModal gates Save & Proceed behind MEETING_SCHEDULED"
+  );
+  assert.ok(
+    workflowContent.includes("outcome === 'NOT_INTERESTED'") &&
+      workflowContent.includes("Mark as Rejected / Lost"),
+    "LeadWorkflowPage handles Not Interested / Lost outcome without advancing to Meeting"
+  );
+  assert.ok(
+    modalContent.includes("outcome === 'NOT_INTERESTED'") &&
+      modalContent.includes("enquiryService.rejectLead"),
+    "FollowUpModal offers marking lead Rejected / Lost when Not Interested is logged"
+  );
+  assert.ok(
+    tableContent.includes("filter-lead-outcome") &&
+      tableContent.includes("getFollowUpOutcomeMeta"),
+    "NewLeadTable renders granular Follow-up Outcome badges and filter"
+  );
+});
+
+test("Follow-up Outcome Badge & Filter Helpers: Runtime formatting and filtering behavior", () => {
+  const cbMeta = getFollowUpOutcomeMeta("CALL_BACK_REQUESTED");
+  assert.strictEqual(cbMeta?.label, "Call Back Requested");
+  assert.ok(cbMeta?.badgeCls.includes("amber"), "Call Back Requested uses amber styling");
+
+  const noAnswerMeta = getFollowUpOutcomeMeta("NO_ANSWER");
+  assert.strictEqual(noAnswerMeta?.label, "No Answer / Busy");
+
+  const meetingMeta = getFollowUpOutcomeMeta("MEETING_SCHEDULED");
+  assert.strictEqual(meetingMeta?.label, "Meeting Agreed");
+  assert.ok(meetingMeta?.badgeCls.includes("emerald"), "Meeting Agreed uses green styling");
+
+  const stageMeta = getWorkflowStageMeta("FOLLOW_UP");
+  assert.strictEqual(stageMeta.label, "01. Follow-up");
+
+  const todayIso = new Date().toISOString().split("T")[0];
+  assert.strictEqual(
+    formatFollowUpScheduleLabel(todayIso, "16:00"),
+    "Today 16:00",
+    "Formats today callback date with time"
+  );
+
+  const leadItem = {
+    id: "1",
+    srNo: "01",
+    name: "Amit Sharma",
+    initials: "AS",
+    avatarColor: "bg-blue-100 text-blue-700",
+    mobile: "9876••••10",
+    price: "Price on Request",
+    remark: "Interested",
+    isMockData: false,
+    status: "ACTIVE" as const,
+    currentStage: "FOLLOW_UP" as const,
+    lastFollowUpOutcome: "CALL_BACK_REQUESTED" as const,
+    nextFollowUpDate: todayIso,
+    nextFollowUpTime: "16:00",
+  };
+
+  assert.strictEqual(
+    matchesGlobalFilter(leadItem, "call back"),
+    true,
+    "Global search matches readable follow-up outcome label"
+  );
+  assert.strictEqual(
+    matchesTableFilters(leadItem, {
+      stage: "ALL",
+      status: "ALL",
+      agent: "ALL",
+      followUp: "ALL",
+      outcome: "CALL_BACK_REQUESTED",
+    }),
+    true,
+    "Table outcome filter includes matching outcome"
+  );
+  assert.strictEqual(
+    matchesTableFilters(leadItem, {
+      stage: "ALL",
+      status: "ALL",
+      agent: "ALL",
+      followUp: "ALL",
+      outcome: "NO_ANSWER",
+    }),
+    false,
+    "Table outcome filter excludes non-matching outcome"
+  );
+});
+
+test("Hierarchical Activity & Accountability UI: Quick Call Log, Scorecard, Dashboard Accountability, and Timeline Filters", () => {
+  const switchedOffMeta = getFollowUpOutcomeMeta("SWITCHED_OFF");
+  assert.strictEqual(switchedOffMeta?.label, "Switched Off / Not Reachable");
+  assert.strictEqual(getFollowUpOutcomeMeta("SITE_VISIT_COMPLETED")?.label, "Site Visit Completed");
+  assert.strictEqual(getFollowUpOutcomeMeta("DEAL_DONE")?.label, "Deal Done");
+
+  const quickModalPath = path.join(__dirname, "../src/features/sales-dashboard/components/QuickCallLogModal.tsx");
+  const panelPath = path.join(__dirname, "../src/features/reporting/components/TeamActivityAccountabilityPanel.tsx");
+  const scorecardPath = path.join(__dirname, "../src/features/sales-dashboard/components/MyDailyActivityScorecard.tsx");
+  const timelinePath = path.join(__dirname, "../src/features/activities/ActivitiesTimelinePage.tsx");
+  const tablePath = path.join(__dirname, "../src/features/sales-dashboard/components/NewLeadTable.tsx");
+  const adminDashPath = path.join(__dirname, "../src/features/admin/AdminDashboardPage.tsx");
+  const mgrDashPath = path.join(__dirname, "../src/features/manager/ManagerDashboardPage.tsx");
+  const salesDashPath = path.join(__dirname, "../src/features/sales-dashboard/SalesDashboardPage.tsx");
+
+  assert.ok(fs.existsSync(quickModalPath), "QuickCallLogModal.tsx must exist");
+  assert.ok(fs.existsSync(panelPath), "TeamActivityAccountabilityPanel.tsx must exist");
+  assert.ok(fs.existsSync(scorecardPath), "MyDailyActivityScorecard.tsx must exist");
+
+  assert.ok(fs.readFileSync(tablePath, "utf-8").includes("Log Call"), "NewLeadTable mounts Quick Log Call action");
+  assert.ok(fs.readFileSync(adminDashPath, "utf-8").includes("TeamActivityAccountabilityPanel"), "AdminDashboardPage mounts TeamActivityAccountabilityPanel");
+  assert.ok(fs.readFileSync(mgrDashPath, "utf-8").includes("TeamActivityAccountabilityPanel"), "ManagerDashboardPage mounts TeamActivityAccountabilityPanel");
+  assert.ok(fs.readFileSync(salesDashPath, "utf-8").includes("MyDailyActivityScorecard"), "SalesDashboardPage mounts MyDailyActivityScorecard");
+
+  const timelineContent = fs.readFileSync(timelinePath, "utf-8");
+  assert.ok(
+    timelineContent.includes("getActivityFeed") &&
+      timelineContent.includes("Employee (Sales / Manager)") &&
+      timelineContent.includes("Call / Follow-Up Outcome"),
+    "ActivitiesTimelinePage supports employee, outcome, activity type, and date filters"
+  );
 });

@@ -144,3 +144,96 @@ test("Employee Management Page: Navigates to /admin/employees/new dedicated page
   const content = fs.readFileSync(empPagePath, "utf-8");
   assert.ok(content.includes("navigate('/admin/employees/new')"), "Add button navigates to /admin/employees/new");
 });
+
+test("Clickable Dashboard KPI Cards & URL Query Filter Sync", () => {
+  const metricCardPath = path.join(__dirname, "../src/components/ui/MetricCard.tsx");
+  const metricCardContent = fs.readFileSync(metricCardPath, "utf-8");
+  assert.ok(metricCardContent.includes("onClick?: () => void"), "MetricCard supports onClick");
+  assert.ok(metricCardContent.includes("ArrowUpRight"), "MetricCard renders hover ArrowUpRight affordance");
+  assert.ok(metricCardContent.includes("tabIndex={isInteractive ? 0 : undefined}"), "MetricCard supports keyboard focus");
+
+  const routesContent = fs.readFileSync(path.join(__dirname, "../src/routes/AppRoutes.tsx"), "utf-8");
+  assert.ok(routesContent.includes('path="completed-deals"'), "AppRoutes registers /completed-deals alias");
+  assert.ok(routesContent.includes('path="completed-deals/:dealId"'), "AppRoutes registers /completed-deals/:dealId alias");
+
+  const adminContent = fs.readFileSync(path.join(__dirname, "../src/features/admin/AdminDashboardPage.tsx"), "utf-8");
+  for (const route of [
+    "/admin/employees?status=active",
+    "/admin/employees?role=MANAGER",
+    "/admin/employees?role=SALES&status=active",
+    "/admin/employees",
+    "/leads?tab=active",
+    "/follow-ups/pending",
+    "/follow-ups/future",
+    "/completed-deals",
+    "/admin/leads?tab=rejected",
+    "/leads?tab=active&stage=FOLLOW_UP",
+    "/leads?tab=active&stage=MEETING_PLAN",
+    "/leads?tab=active&stage=SITE_VISIT_PLAN",
+  ]) {
+    assert.ok(adminContent.includes(route), `AdminDashboardPage wires card route: ${route}`);
+  }
+
+  const managerContent = fs.readFileSync(path.join(__dirname, "../src/features/manager/ManagerDashboardPage.tsx"), "utf-8");
+  for (const route of [
+    "/manager/team",
+    "/leads?tab=active",
+    "/leads?tab=unassigned",
+    "/follow-ups/pending",
+    "/follow-ups/future",
+    "/completed-deals",
+    "/leads?tab=rejected",
+    "/leads?tab=active&stage=FOLLOW_UP",
+    "/leads?tab=active&stage=MEETING_PLAN",
+    "/leads?tab=active&stage=SITE_VISIT_PLAN",
+  ]) {
+    assert.ok(managerContent.includes(route), `ManagerDashboardPage wires card route: ${route}`);
+  }
+
+  const salesKpiContent = fs.readFileSync(
+    path.join(__dirname, "../src/features/sales-dashboard/components/SalesKpiCards.tsx"),
+    "utf-8"
+  );
+  assert.ok(salesKpiContent.includes("/leads?tab=active"), "SalesKpiCards wires leads route");
+  assert.ok(salesKpiContent.includes("/follow-ups/pending"), "SalesKpiCards wires pending follow-ups route");
+  assert.ok(salesKpiContent.includes("/follow-ups/future"), "SalesKpiCards wires future follow-ups route");
+
+  const salesPageContent = fs.readFileSync(
+    path.join(__dirname, "../src/features/sales-dashboard/SalesDashboardPage.tsx"),
+    "utf-8"
+  );
+  assert.ok(salesPageContent.includes("Meetings / Site Visits"), "SalesDashboardPage renders Meetings / Site Visits card");
+  assert.ok(salesPageContent.includes("/leads?tab=active&stage=MEETING_PLAN"), "SalesDashboardPage wires stage route");
+  assert.ok(salesPageContent.includes("/completed-deals"), "SalesDashboardPage wires completed deals route");
+  assert.ok(salesPageContent.includes("/leads?tab=rejected"), "SalesDashboardPage wires rejected leads route");
+
+  const scorecardContent = fs.readFileSync(
+    path.join(__dirname, "../src/features/sales-dashboard/components/MyDailyActivityScorecard.tsx"),
+    "utf-8"
+  );
+  for (const route of [
+    "/activities?period=today",
+    "/activities?period=today&outcome=CONNECTED",
+    "/activities?period=today&outcome=CALL_BACK_REQUESTED",
+    "/leads?tab=active&stage=MEETING_PLAN",
+    "/completed-deals",
+    "/follow-ups/pending",
+  ]) {
+    assert.ok(scorecardContent.includes(route), `MyDailyActivityScorecard wires tile route: ${route}`);
+  }
+
+  const empContent = fs.readFileSync(path.join(__dirname, "../src/features/admin/EmployeeManagementPage.tsx"), "utf-8");
+  assert.ok(empContent.includes("useSearchParams"), "EmployeeManagementPage uses useSearchParams");
+  assert.ok(empContent.includes("searchParams.get('role')"), "EmployeeManagementPage reads ?role=");
+  assert.ok(empContent.includes("searchParams.get('status')"), "EmployeeManagementPage reads ?status=");
+
+  const leadsContent = fs.readFileSync(path.join(__dirname, "../src/features/leads/LeadsPage.tsx"), "utf-8");
+  assert.ok(leadsContent.includes("searchParams.get('stage')"), "LeadsPage reads ?stage=");
+  assert.ok(leadsContent.includes("initialStageFilter={stageFilter}"), "LeadsPage passes initialStageFilter to NewLeadTable");
+
+  const leadTableContent = fs.readFileSync(
+    path.join(__dirname, "../src/features/sales-dashboard/components/NewLeadTable.tsx"),
+    "utf-8"
+  );
+  assert.ok(leadTableContent.includes("initialStageFilter?: string"), "NewLeadTable accepts initialStageFilter");
+});

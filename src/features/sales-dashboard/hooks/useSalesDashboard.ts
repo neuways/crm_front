@@ -16,12 +16,89 @@ import {
 } from "../data/mockDashboardData.js";
 import { enquiryService } from "../../../services/enquiry.service.js";
 import { useAuth } from "../../../context/AuthContext.js";
-import { TaskStatusCounts } from "../../../types/enquiry.types.js";
+import { IEnquiry, TaskStatusCounts } from "../../../types/enquiry.types.js";
+
+const AVATAR_COLORS = [
+  "bg-purple-100 text-purple-700",
+  "bg-emerald-100 text-emerald-700",
+  "bg-blue-100 text-blue-700",
+  "bg-indigo-100 text-indigo-700",
+  "bg-slate-200 text-slate-700",
+];
+
+/** Map a backend enquiry record into a UI `NewLeadItem` row model. */
+export const mapEnquiryToNewLeadItem = (
+  e: IEnquiry,
+  index: number,
+  srOffset = 0,
+): NewLeadItem => {
+  const names = (e.name || "Anonymous Prospect").split(" ");
+  const initials = (names[0]?.[0] || "N") + (names[1]?.[0] || "");
+
+  let priceStr = "Price on Request";
+  if (e.budgetMin && e.budgetMax) {
+    priceStr = `₹${e.budgetMin.toLocaleString()} - ₹${e.budgetMax.toLocaleString()}`;
+  } else if (e.budgetMin) {
+    priceStr = `From ₹${e.budgetMin.toLocaleString()}`;
+  } else if (e.budgetMax) {
+    priceStr = `Up to ₹${e.budgetMax.toLocaleString()}`;
+  }
+
+  const cleanMobile = (e.mobile || "").replace(/\s+/g, "");
+  const maskedMobile =
+    cleanMobile.length > 5
+      ? `${cleanMobile.slice(0, cleanMobile.length - 4)}••••`
+      : cleanMobile;
+
+  return {
+    id: e.id || (e as any)._id,
+    srNo: String(srOffset + index + 1).padStart(2, "0"),
+    name: e.name,
+    initials: initials.toUpperCase(),
+    avatarColor: AVATAR_COLORS[index % AVATAR_COLORS.length],
+    mobile: maskedMobile,
+    price: priceStr,
+    remark: e.requirement || e.projectName || "Active prospective enquiry",
+    isMockData: false,
+    createdAt: e.createdAt,
+    updatedAt: e.updatedAt,
+    assignedTo: (e as any).assignedTo,
+    status: e.status,
+    currentStage: (e as any).currentStage || "FOLLOW_UP",
+    nextFollowUpDate: (e as any).nextFollowUpDate,
+    nextFollowUpTime: (e as any).nextFollowUpTime,
+    lastFollowUpOutcome: (e as any).lastFollowUpOutcome,
+    lastFollowUpAt: (e as any).lastFollowUpAt,
+    projectName: e.projectName,
+    isDoNotContact: e.isDoNotContact,
+  };
+};
+
+export interface SalesPipelineOverview {
+  meetingsAndVisitsCount: number;
+  meetingPlanCount: number;
+  siteVisitPlanCount: number;
+  completedDealsCount: number;
+  rejectedCount: number;
+  explicitRejectedCount: number;
+  dealLostCount: number;
+}
+
+const defaultPipelineOverview: SalesPipelineOverview = {
+  meetingsAndVisitsCount: 0,
+  meetingPlanCount: 0,
+  siteVisitPlanCount: 0,
+  completedDealsCount: 0,
+  rejectedCount: 0,
+  explicitRejectedCount: 0,
+  dealLostCount: 0,
+};
 
 export interface UseSalesDashboardReturn {
   selectedPeriod: DashboardPeriod;
   setSelectedPeriod: (period: DashboardPeriod) => void;
   kpiMetrics: DashboardKpiMetric[];
+  pipelineOverview: SalesPipelineOverview;
   newLeads: NewLeadItem[];
   pendingFollowUps: PendingFollowUpData;
   futureFollowUps: FutureFollowUpData;
@@ -108,7 +185,10 @@ const defaultLeadQualification: LeadQualificationMatrix = {
   isPopulated: false,
 };
 
-export const useSalesDashboard = (): UseSalesDashboardReturn => {
+export const useSalesDashboard = (
+  options?: { enabled?: boolean },
+): UseSalesDashboardReturn => {
+  const isEnabled = options?.enabled ?? true;
   const {
     isDemoMode: authDemoMode,
     enterDemoMode,
@@ -138,6 +218,7 @@ export const useSalesDashboard = (): UseSalesDashboardReturn => {
   };
 
   const [dynamicKpis, setDynamicKpis] = useState<DashboardKpiMetric[]>(defaultKpiMetrics);
+  const [pipelineOverview, setPipelineOverview] = useState<SalesPipelineOverview>(defaultPipelineOverview);
   const [newLeads, setNewLeads] = useState<NewLeadItem[]>([]);
   const [pendingFollowUps, setPendingFollowUps] = useState<PendingFollowUpData>(defaultPendingFollowUps);
   const [futureFollowUps, setFutureFollowUps] = useState<FutureFollowUpData>(defaultFutureFollowUps);
@@ -173,6 +254,9 @@ export const useSalesDashboard = (): UseSalesDashboardReturn => {
           limit: 100,
           status: "ACTIVE",
           rejected: false,
+          excludeCompletedDeals: true,
+          assignedOnly: true,
+          unassigned: false,
         }),
         enquiryService.getDashboardSummary(),
       ]);
@@ -206,54 +290,7 @@ export const useSalesDashboard = (): UseSalesDashboardReturn => {
       if (res.data && Array.isArray(res.data.enquiries)) {
         const liveLeads: NewLeadItem[] = res.data.enquiries
           .filter((e) => e.status !== "CLOSED" && !e.rejection?.reason)
-          .map((e, index) => {
-          const names = (e.name || "Anonymous Prospect").split(" ");
-          const initials = (names[0]?.[0] || "N") + (names[1]?.[0] || "");
-          const colors = [
-            "bg-purple-100 text-purple-700",
-            "bg-emerald-100 text-emerald-700",
-            "bg-blue-100 text-blue-700",
-            "bg-indigo-100 text-indigo-700",
-            "bg-slate-200 text-slate-700",
-          ];
-
-          let priceStr = "Price on Request";
-          if (e.budgetMin && e.budgetMax) {
-            priceStr = `₹${e.budgetMin.toLocaleString()} - ₹${e.budgetMax.toLocaleString()}`;
-          } else if (e.budgetMin) {
-            priceStr = `From ₹${e.budgetMin.toLocaleString()}`;
-          } else if (e.budgetMax) {
-            priceStr = `Up to ₹${e.budgetMax.toLocaleString()}`;
-          }
-
-          // Privacy mask: preserve customer privacy
-          const cleanMobile = e.mobile.replace(/\s+/g, "");
-          const maskedMobile =
-            cleanMobile.length > 5
-              ? `${cleanMobile.slice(0, cleanMobile.length - 4)}••••`
-              : cleanMobile;
-
-          return {
-            id: e.id || (e as any)._id,
-            srNo: String(index + 1).padStart(2, "0"),
-            name: e.name,
-            initials: initials.toUpperCase(),
-            avatarColor: colors[index % colors.length],
-            mobile: maskedMobile,
-            price: priceStr,
-            remark:
-              e.requirement || e.projectName || "Active prospective enquiry",
-            isMockData: false,
-            createdAt: e.createdAt,
-            assignedTo: (e as any).assignedTo,
-            status: e.status,
-            currentStage: (e as any).currentStage || 'FOLLOW_UP',
-            nextFollowUpDate: (e as any).nextFollowUpDate,
-            nextFollowUpTime: (e as any).nextFollowUpTime,
-            projectName: e.projectName,
-            isDoNotContact: e.isDoNotContact,
-          };
-        });
+          .map((e, index) => mapEnquiryToNewLeadItem(e, index));
 
         setNewLeads(liveLeads);
         setLeadsError(null);
@@ -335,6 +372,21 @@ export const useSalesDashboard = (): UseSalesDashboardReturn => {
         if (s.taskStatusCounts) {
           setTaskStatusCounts(s.taskStatusCounts);
         }
+
+        const meetingPlanCount = s.stageBreakdown?.meetingPlan ?? 0;
+        const siteVisitPlanCount = s.stageBreakdown?.siteVisitPlan ?? 0;
+        const rejectedCount = s.rejectedCount ?? 0;
+        const dealLostCount = s.dealLostCount ?? 0;
+        setPipelineOverview({
+          meetingsAndVisitsCount: meetingPlanCount + siteVisitPlanCount,
+          meetingPlanCount,
+          siteVisitPlanCount,
+          completedDealsCount: s.completedDealsCount ?? s.stageBreakdown?.dealDone ?? 0,
+          rejectedCount,
+          explicitRejectedCount:
+            s.explicitRejectedCount ?? Math.max(0, rejectedCount - dealLostCount),
+          dealLostCount,
+        });
       }
     } catch (err: unknown) {
       setLeadsError(
@@ -361,10 +413,12 @@ export const useSalesDashboard = (): UseSalesDashboardReturn => {
   }, [fetchLiveEnquiries]);
 
   useEffect(() => {
+    if (!isEnabled) return;
     if (isDemoMode) {
       // In explicit demo mode: display verified demonstration dataset
       setNewLeads(mockNewLeads);
       setDynamicKpis(mockKpiMetrics);
+      setPipelineOverview(defaultPipelineOverview);
       setPendingFollowUps(mockPendingFollowUps);
       setFutureFollowUps(mockFutureFollowUps);
       setLeadQualification(mockLeadQualification);
@@ -374,11 +428,11 @@ export const useSalesDashboard = (): UseSalesDashboardReturn => {
       // In live mode: query live backend API
       fetchLiveEnquiries();
     }
-  }, [isDemoMode, fetchLiveEnquiries]);
+  }, [isEnabled, isDemoMode, fetchLiveEnquiries]);
 
   // Auto-refresh live dashboard data safely when connectivity is restored
   useEffect(() => {
-    if (typeof window === "undefined" || isDemoMode) return;
+    if (!isEnabled || typeof window === "undefined" || isDemoMode) return;
 
     const handleReconnected = () => {
       fetchLiveEnquiries();
@@ -386,12 +440,13 @@ export const useSalesDashboard = (): UseSalesDashboardReturn => {
 
     window.addEventListener("nueways:reconnected", handleReconnected);
     return () => window.removeEventListener("nueways:reconnected", handleReconnected);
-  }, [isDemoMode, fetchLiveEnquiries]);
+  }, [isEnabled, isDemoMode, fetchLiveEnquiries]);
 
   return {
     selectedPeriod,
     setSelectedPeriod,
     kpiMetrics: dynamicKpis,
+    pipelineOverview,
     newLeads,
     pendingFollowUps,
     futureFollowUps,

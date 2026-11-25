@@ -10,8 +10,10 @@ import {
   RefreshCw,
   Plus,
   ArrowRight,
+  ArrowUpRight,
   Layers,
   FileSpreadsheet,
+  Inbox,
 } from 'lucide-react';
 import { UserProfile } from '../../types/auth.types.js';
 import { Button } from '../../components/ui/Button.js';
@@ -26,6 +28,7 @@ import {
   FutureFollowUpTable,
 } from '../sales-dashboard/components/FollowUpSummaryTable.js';
 import { NewEnquiryModal } from '../sales-dashboard/components/NewEnquiryModal.js';
+import { TeamActivityAccountabilityPanel } from '../reporting/components/TeamActivityAccountabilityPanel.js';
 import {
   DashboardPeriod,
   PendingFollowUpData,
@@ -51,6 +54,7 @@ export const ManagerDashboardPage: React.FC = () => {
   // Manager metrics & team performance state
   const [summary, setSummary] = useState<ClientDashboardSummaryData | null>(null);
   const [team, setTeam] = useState<TeamMemberPerformance[]>([]);
+  const [unassignedCount, setUnassignedCount] = useState<number>(0);
   const [isLoadingSummary, setIsLoadingSummary] = useState<boolean>(true);
   const [summaryError, setSummaryError] = useState<string | null>(null);
 
@@ -58,9 +62,10 @@ export const ManagerDashboardPage: React.FC = () => {
     setIsLoadingSummary(true);
     setSummaryError(null);
     try {
-      const [sumRes, teamRes] = await Promise.all([
+      const [sumRes, teamRes, unassignedRes] = await Promise.all([
         enquiryService.getDashboardSummary(),
         enquiryService.getTeamPerformance(),
+        enquiryService.getEnquiries({ unassigned: true, limit: 1 }).catch(() => null),
       ]);
 
       if (sumRes.success && sumRes.data) {
@@ -71,6 +76,14 @@ export const ManagerDashboardPage: React.FC = () => {
 
       if (teamRes.success && teamRes.data?.team) {
         setTeam(teamRes.data.team);
+      }
+
+      if (unassignedRes?.success && unassignedRes.data) {
+        setUnassignedCount(
+          unassignedRes.data.pagination?.total ??
+            unassignedRes.data.pagination?.totalCount ??
+            (unassignedRes.data.enquiries || []).length
+        );
       }
     } catch (err: unknown) {
       setSummaryError(
@@ -234,112 +247,108 @@ export const ManagerDashboardPage: React.FC = () => {
         <ErrorState message={summaryError} onRetry={fetchManagerData} />
       ) : (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* 1. Active Sales Agents */}
-            <div
+            <MetricCard
+              title="Active Agents"
+              subtitle="Team Roster"
+              value={activeAgentsCount}
+              badgeText={`${team.length} Total`}
+              badgeType={activeAgentsCount > 0 ? 'positive' : 'neutral'}
+              icon={<Users className="w-5 h-5" />}
+              iconBgColor="bg-blue-50 text-brand-primary"
+              isMockData={false}
+              ariaLabel="View active sales team roster"
               onClick={() => navigate('/manager/team')}
-              className="cursor-pointer transition-transform hover:-translate-y-0.5"
-            >
-              <MetricCard
-                title="Active Agents"
-                subtitle="Team Roster"
-                value={activeAgentsCount}
-                badgeText={`${team.length} Total`}
-                badgeType={activeAgentsCount > 0 ? 'positive' : 'neutral'}
-                icon={<Users className="w-5 h-5" />}
-                iconBgColor="bg-blue-50 text-brand-primary"
-                isMockData={false}
-              />
-            </div>
+            />
 
             {/* 2. Active Team Leads */}
-            <div
-              onClick={() => navigate('/manager/leads')}
-              className="cursor-pointer transition-transform hover:-translate-y-0.5"
-            >
-              <MetricCard
-                title="Active Leads"
-                subtitle="Pipeline Portfolio"
-                value={activeLeadCount}
-                badgeText="In Progress"
-                badgeType="info"
-                icon={<Filter className="w-5 h-5" />}
-                iconBgColor="bg-indigo-50 text-indigo-600"
-                isMockData={false}
-              />
-            </div>
+            <MetricCard
+              title="Active Leads"
+              subtitle="Pipeline Portfolio"
+              value={activeLeadCount}
+              badgeText="In Progress"
+              badgeType="info"
+              icon={<Filter className="w-5 h-5" />}
+              iconBgColor="bg-indigo-50 text-indigo-600"
+              isMockData={false}
+              ariaLabel="View active team leads"
+              onClick={() => navigate('/leads?tab=active')}
+            />
 
-            {/* 3. Pending Follow-ups */}
-            <div
-              onClick={() => navigate('/manager/follow-ups/pending')}
-              className="cursor-pointer transition-transform hover:-translate-y-0.5"
-            >
-              <MetricCard
-                title="Pending Tasks"
-                subtitle="Due / Overdue"
-                value={pendingFollowUpCount}
-                badgeText={pendingFollowUpCount > 0 ? '• Action Due' : 'All Clear'}
-                badgeType={pendingFollowUpCount > 0 ? 'warning' : 'positive'}
-                icon={<Clock className="w-5 h-5" />}
-                iconBgColor="bg-amber-50 text-amber-600"
-                isMockData={false}
-              />
-            </div>
+            {/* 3. Unassigned Leads */}
+            <MetricCard
+              title="Unassigned Leads"
+              subtitle="Needs Agent Assignment"
+              value={unassignedCount}
+              badgeText={unassignedCount > 0 ? 'Assign Now' : 'All Assigned'}
+              badgeType={unassignedCount > 0 ? 'warning' : 'positive'}
+              icon={<Inbox className="w-5 h-5" />}
+              iconBgColor="bg-violet-50 text-violet-600"
+              isMockData={false}
+              ariaLabel="View unassigned leads queue"
+              onClick={() => navigate('/leads?tab=unassigned')}
+            />
 
-            {/* 4. Future Follow-ups */}
-            <div
-              onClick={() => navigate('/manager/follow-ups/future')}
-              className="cursor-pointer transition-transform hover:-translate-y-0.5"
-            >
-              <MetricCard
-                title="Future Tasks"
-                subtitle="Scheduled Calls"
-                value={futureFollowUpCount}
-                badgeText="Upcoming"
-                badgeType="info"
-                icon={<Calendar className="w-5 h-5" />}
-                iconBgColor="bg-sky-50 text-sky-600"
-                isMockData={false}
-              />
-            </div>
+            {/* 4. Pending Follow-ups */}
+            <MetricCard
+              title="Pending Tasks"
+              subtitle="Due / Overdue"
+              value={pendingFollowUpCount}
+              badgeText={pendingFollowUpCount > 0 ? '• Action Due' : 'All Clear'}
+              badgeType={pendingFollowUpCount > 0 ? 'warning' : 'positive'}
+              icon={<Clock className="w-5 h-5" />}
+              iconBgColor="bg-amber-50 text-amber-600"
+              isMockData={false}
+              ariaLabel="View pending follow-ups"
+              onClick={() => navigate('/follow-ups/pending')}
+            />
 
-            {/* 5. Completed Deals */}
-            <div
-              onClick={() => navigate('/manager/completed-deals')}
-              className="cursor-pointer transition-transform hover:-translate-y-0.5"
-            >
-              <MetricCard
-                title="Completed Deals"
-                subtitle="Deals Won"
-                value={completedDealCount}
-                badgeText="Finalized"
-                badgeType="positive"
-                icon={<CheckCircle2 className="w-5 h-5" />}
-                iconBgColor="bg-emerald-50 text-emerald-600"
-                isMockData={false}
-              />
-            </div>
+            {/* 5. Future Follow-ups */}
+            <MetricCard
+              title="Future Tasks"
+              subtitle="Scheduled Calls"
+              value={futureFollowUpCount}
+              badgeText="Upcoming"
+              badgeType="info"
+              icon={<Calendar className="w-5 h-5" />}
+              iconBgColor="bg-sky-50 text-sky-600"
+              isMockData={false}
+              ariaLabel="View future follow-ups"
+              onClick={() => navigate('/follow-ups/future')}
+            />
 
-            {/* 6. Rejected / Lost Leads */}
-            <div
-              onClick={() => navigate('/manager/rejected-deals')}
-              className="cursor-pointer transition-transform hover:-translate-y-0.5"
-            >
-              <MetricCard
-                title="Rejected / Lost"
-                subtitle={
-                  dealLostCount > 0
-                    ? `Rejected: ${explicitRejectedCount} • Lost: ${dealLostCount}`
-                    : "Dropped Leads"
-                }
-                value={rejectedCount}
-                badgeText="Closed"
-                badgeType="neutral"
-                icon={<XCircle className="w-5 h-5" />}
-                iconBgColor="bg-red-50 text-red-600"
-                isMockData={false}
-              />
-            </div>
+            {/* 6. Completed Deals */}
+            <MetricCard
+              title="Completed Deals"
+              subtitle="Deals Won"
+              value={completedDealCount}
+              badgeText="Finalized"
+              badgeType="positive"
+              icon={<CheckCircle2 className="w-5 h-5" />}
+              iconBgColor="bg-emerald-50 text-emerald-600"
+              isMockData={false}
+              ariaLabel="View completed deals"
+              onClick={() => navigate('/completed-deals')}
+            />
+
+            {/* 7. Rejected / Lost Leads */}
+            <MetricCard
+              title="Rejected / Lost"
+              subtitle={
+                dealLostCount > 0
+                  ? `Rejected: ${explicitRejectedCount} • Lost: ${dealLostCount}`
+                  : "Dropped Leads"
+              }
+              value={rejectedCount}
+              badgeText="Closed"
+              badgeType="neutral"
+              icon={<XCircle className="w-5 h-5" />}
+              iconBgColor="bg-red-50 text-red-600"
+              isMockData={false}
+              ariaLabel="View rejected and lost leads"
+              onClick={() => navigate('/leads?tab=rejected')}
+            />
           </div>
 
           {/* -------------------------------------------------------------
@@ -396,40 +405,100 @@ export const ManagerDashboardPage: React.FC = () => {
             {/* Stage Detail Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Stage 1 */}
-              <div className="p-4 rounded-xl border border-blue-100 bg-blue-50/40">
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label="Filter leads by Stage 1 Follow-up"
+                onClick={() => navigate('/leads?tab=active&stage=FOLLOW_UP')}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    navigate('/leads?tab=active&stage=FOLLOW_UP');
+                  }
+                }}
+                className="p-4 rounded-xl border border-blue-100 bg-blue-50/40 hover:bg-blue-50 hover:border-blue-300 hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 transition-all cursor-pointer group"
+              >
                 <div className="flex items-center justify-between text-xs text-blue-700 font-bold mb-1">
                   <span>01. Follow-up</span>
-                  <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 rounded-full">{pctFollowUp}%</span>
+                  <div className="flex items-center gap-1">
+                    <ArrowUpRight className="h-3.5 w-3.5 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+                    <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 rounded-full">{pctFollowUp}%</span>
+                  </div>
                 </div>
                 <div className="text-2xl font-extrabold text-blue-900">{stageFollowUp}</div>
                 <p className="text-[11px] text-blue-700/80 mt-1">Initial contact &amp; requirement discovery</p>
               </div>
 
               {/* Stage 2 */}
-              <div className="p-4 rounded-xl border border-purple-100 bg-purple-50/40">
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label="Filter leads by Stage 2 Meeting Plan"
+                onClick={() => navigate('/leads?tab=active&stage=MEETING_PLAN')}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    navigate('/leads?tab=active&stage=MEETING_PLAN');
+                  }
+                }}
+                className="p-4 rounded-xl border border-purple-100 bg-purple-50/40 hover:bg-purple-50 hover:border-purple-300 hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 transition-all cursor-pointer group"
+              >
                 <div className="flex items-center justify-between text-xs text-purple-700 font-bold mb-1">
                   <span>02. Meeting Plan</span>
-                  <span className="text-[10px] px-1.5 py-0.5 bg-purple-100 rounded-full">{pctMeeting}%</span>
+                  <div className="flex items-center gap-1">
+                    <ArrowUpRight className="h-3.5 w-3.5 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+                    <span className="text-[10px] px-1.5 py-0.5 bg-purple-100 rounded-full">{pctMeeting}%</span>
+                  </div>
                 </div>
                 <div className="text-2xl font-extrabold text-purple-900">{stageMeetingPlan}</div>
                 <p className="text-[11px] text-purple-700/80 mt-1">Manager-level client discussions</p>
               </div>
 
               {/* Stage 3 */}
-              <div className="p-4 rounded-xl border border-amber-100 bg-amber-50/40">
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label="Filter leads by Stage 3 Site Visit Plan"
+                onClick={() => navigate('/leads?tab=active&stage=SITE_VISIT_PLAN')}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    navigate('/leads?tab=active&stage=SITE_VISIT_PLAN');
+                  }
+                }}
+                className="p-4 rounded-xl border border-amber-100 bg-amber-50/40 hover:bg-amber-50 hover:border-amber-300 hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 transition-all cursor-pointer group"
+              >
                 <div className="flex items-center justify-between text-xs text-amber-700 font-bold mb-1">
                   <span>03. Site Visit Plan</span>
-                  <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 rounded-full">{pctSiteVisit}%</span>
+                  <div className="flex items-center gap-1">
+                    <ArrowUpRight className="h-3.5 w-3.5 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+                    <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 rounded-full">{pctSiteVisit}%</span>
+                  </div>
                 </div>
                 <div className="text-2xl font-extrabold text-amber-900">{stageSiteVisitPlan}</div>
                 <p className="text-[11px] text-amber-700/80 mt-1">On-site property tours scheduled</p>
               </div>
 
               {/* Stage 4 */}
-              <div className="p-4 rounded-xl border border-emerald-100 bg-emerald-50/40">
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label="View Stage 4 Completed Deals"
+                onClick={() => navigate('/completed-deals')}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    navigate('/completed-deals');
+                  }
+                }}
+                className="p-4 rounded-xl border border-emerald-100 bg-emerald-50/40 hover:bg-emerald-50 hover:border-emerald-300 hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 transition-all cursor-pointer group"
+              >
                 <div className="flex items-center justify-between text-xs text-emerald-700 font-bold mb-1">
                   <span>04. Deal Done</span>
-                  <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100 rounded-full">{pctDealDone}%</span>
+                  <div className="flex items-center gap-1">
+                    <ArrowUpRight className="h-3.5 w-3.5 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+                    <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100 rounded-full">{pctDealDone}%</span>
+                  </div>
                 </div>
                 <div className="text-2xl font-extrabold text-emerald-900">{stageDealDone}</div>
                 <p className="text-[11px] text-emerald-700/80 mt-1">Finalized customer conversions</p>
@@ -537,6 +606,11 @@ export const ManagerDashboardPage: React.FC = () => {
               </div>
             )}
           </Card>
+
+          {/* -------------------------------------------------------------
+           * Daily Work & Call Accountability
+           * ------------------------------------------------------------- */}
+          <TeamActivityAccountabilityPanel viewerRole="MANAGER" />
 
           {/* -------------------------------------------------------------
            * Follow-Up Summary Tables (Pending & Future)

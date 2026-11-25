@@ -51,6 +51,11 @@ import {
   DncActivationReason,
   DncDetails,
 } from '../../types/enquiry.types.js';
+import {
+  getFollowUpOutcomeMeta,
+  formatFollowUpScheduleLabel,
+  getWorkflowStageMeta,
+} from '../../utils/followUpOutcome.js';
 
 export const LeadWorkflowPage: React.FC = () => {
   const { leadId } = useParams<{ leadId: string }>();
@@ -486,17 +491,30 @@ export const LeadWorkflowPage: React.FC = () => {
 
   // Step Completion & Unlocked Logic
   const hasCompletedDiscussion = Boolean(
-    historyList.some(
-      (t) =>
-        t.status === 'COMPLETED' ||
-        (!t.isInitialTask && t.notes && t.notes !== 'System initialized pending follow-up task')
-    ) ||
-    activityList.some(
-      (a) => a.metadata?.step === 'FOLLOW_UP' || a.activityType === 'FOLLOW_UP_COMPLETED'
-    )
+    lead?.lastFollowUpOutcome
+      ? lead.lastFollowUpOutcome === 'MEETING_SCHEDULED'
+      : historyList.some(
+          (t) =>
+            t.outcome === 'MEETING_SCHEDULED' &&
+            (t.status === 'COMPLETED' ||
+              (!t.isInitialTask && t.notes && t.notes !== 'System initialized pending follow-up task'))
+        ) ||
+        activityList.some(
+          (a) =>
+            (a.metadata?.step === 'FOLLOW_UP' || a.activityType === 'FOLLOW_UP_COMPLETED') &&
+            a.metadata?.outcome === 'MEETING_SCHEDULED'
+        )
   );
   const isStep1Done = Boolean(lead && (lead.currentStage !== 'FOLLOW_UP' || hasCompletedDiscussion));
   const isMeetingUnlocked = Boolean(isStep1Done);
+  const step1OutcomeMeta = getFollowUpOutcomeMeta(lead?.lastFollowUpOutcome);
+  const nextPendingFollowUp =
+    historyList.find((t) => t.status === 'PENDING' && !t.isInitialTask) ||
+    historyList.find((t) => t.status === 'PENDING');
+  const nextScheduleBadgeText = formatFollowUpScheduleLabel(
+    lead?.nextFollowUpDate || nextPendingFollowUp?.followUpDate,
+    lead?.nextFollowUpTime || nextPendingFollowUp?.followUpTime
+  );
   const isMeetingCompletedFinal = Boolean(lead?.meetingPlan?.isCompleted);
   const isMeetingCancelled = Boolean(lead?.meetingPlan?.isCancelled);
   const isSiteVisitCancelled = Boolean(lead?.siteVisitPlan?.isCancelled);
@@ -581,6 +599,13 @@ export const LeadWorkflowPage: React.FC = () => {
 
     // Frontend validations
     if (activeStep === 1) {
+      if (advance && outcome !== 'MEETING_SCHEDULED') {
+        showWarningPopup(
+          'Cannot advance to Meeting Plan until Discussion Outcome is set to "Meeting Agreed".',
+          'follow-up-outcome'
+        );
+        return;
+      }
       if (!notes.trim()) {
         showWarningPopup('Follow-up remarks/notes cannot be empty.', 'follow-up-discussion-notes');
         return;
@@ -777,20 +802,40 @@ export const LeadWorkflowPage: React.FC = () => {
         successMsg = 'Deal finalized and saved successfully.';
       }
 
-      showSuccessPopup(successMsg);
-
-      // Trigger deal confirmation modal on Step 4 completion
-      if (activeStep === 4) {
-        setIsDealCompletedConfirmationOpen(true);
-      }
-
-      // Clear note field on step 1 after save so agent can enter a new note next time
+      // Offer closing / marking Rejected if outcome was saved as Not Interested / Lost
+      const savedNoteSnapshot = notes.trim();
       if (activeStep === 1) {
         setNotes('');
       }
 
       // Reload lead data from backend: this updates lead, history, and currentStage cleanly
       await loadLeadData(false);
+
+      if (activeStep === 1 && outcome === 'NOT_INTERESTED' && !isRejectedLead) {
+        const result = await Swal.fire({
+          icon: 'warning',
+          title: 'Follow-Up Logged as Not Interested / Lost',
+          text: 'Step 2 (Meeting Plan) stays locked. Would you like to mark this lead as Rejected / Lost now?',
+          showCancelButton: true,
+          confirmButtonText: 'Yes, Mark Rejected / Lost',
+          cancelButtonText: 'Keep Active for Now',
+          confirmButtonColor: '#dc2626',
+        });
+        if (result.isConfirmed) {
+          setRejectError(null);
+          setRejectionReason('Not interested');
+          setRejectionRemarks(savedNoteSnapshot);
+          setIsRejectionConfirmed(false);
+          setIsRejectDialogOpen(true);
+        }
+      } else {
+        showSuccessPopup(successMsg);
+      }
+
+      // Trigger deal confirmation modal on Step 4 completion
+      if (activeStep === 4) {
+        setIsDealCompletedConfirmationOpen(true);
+      }
     } catch (err: unknown) {
       showErrorPopup(err instanceof Error ? err.message : 'A network error occurred while saving.');
     } finally {
@@ -1102,9 +1147,24 @@ export const LeadWorkflowPage: React.FC = () => {
             >
               {isRejectedLead ? 'REJECTED / LOST' : lead.status}
             </span>
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-brand-primary border border-blue-200">
-              Stage: {lead.currentStage || 'FOLLOW_UP'}
+            <span
+              className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
+                getWorkflowStageMeta(lead.currentStage).cls
+              }`}
+            >
+              Stage: {getWorkflowStageMeta(lead.currentStage).label}
             </span>
+            {step1OutcomeMeta && (
+              <span
+                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border ${step1OutcomeMeta.badgeCls}`}
+              >
+                <span className={`w-2 h-2 rounded-full ${step1OutcomeMeta.dotCls}`} />
+                <span>{step1OutcomeMeta.label}</span>
+                {nextScheduleBadgeText && (
+                  <span className="font-semibold opacity-85">• {nextScheduleBadgeText}</span>
+                )}
+              </span>
+            )}
             {lead.isDoNotContact && (
               <span
                 data-testid="dnc-title-badge"
@@ -1669,8 +1729,17 @@ export const LeadWorkflowPage: React.FC = () => {
                     <Check className="w-3 h-3" /> Done
                   </span>
                 ) : (
-                  <span className="text-[11px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                    Pending
+                  <span
+                    className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full border ${
+                      step1OutcomeMeta
+                        ? step1OutcomeMeta.badgeCls
+                        : 'text-amber-600 bg-amber-50 border-amber-200'
+                    }`}
+                  >
+                    {step1OutcomeMeta && (
+                      <span className={`w-1.5 h-1.5 rounded-full ${step1OutcomeMeta.dotCls}`} />
+                    )}
+                    {step1OutcomeMeta ? step1OutcomeMeta.shortLabel : 'Pending'}
                   </span>
                 )}
               </div>
@@ -1831,6 +1900,7 @@ export const LeadWorkflowPage: React.FC = () => {
                     Discussion Outcome
                   </label>
                   <select
+                    id="follow-up-outcome"
                     value={outcome}
                     onChange={(e) => setOutcome(e.target.value as any)}
                     className="w-full px-3 py-2 bg-surface-card border border-edge rounded-lg text-xs font-semibold text-content-primary focus:outline-hidden focus:ring-1 focus:ring-brand-primary"
@@ -1839,6 +1909,7 @@ export const LeadWorkflowPage: React.FC = () => {
                     <option value="CALL_BACK_REQUESTED">Call Back Requested</option>
                     <option value="MEETING_SCHEDULED">Meeting Agreed</option>
                     <option value="NO_ANSWER">No Answer / Busy</option>
+                    <option value="SWITCHED_OFF">Switched Off / Not Reachable</option>
                     <option value="NOT_INTERESTED">Not Interested / Lost</option>
                     <option value="OTHER">Other</option>
                   </select>
@@ -2154,21 +2225,67 @@ export const LeadWorkflowPage: React.FC = () => {
               </div>
 
               {/* Actions */}
+              {outcome !== 'MEETING_SCHEDULED' && (
+                <div
+                  className={`p-3 rounded-lg border text-xs flex items-start gap-2 ${
+                    outcome === 'NOT_INTERESTED'
+                      ? 'bg-red-50 border-red-200 text-red-900'
+                      : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                  }`}
+                >
+                  <Lock className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>
+                    {outcome === 'NOT_INTERESTED'
+                      ? 'Customer marked Not Interested / Lost. Step 2 (Meeting Plan) stays locked — save the discussion log or mark this lead as Rejected / Lost.'
+                      : 'Step 2 (Meeting Plan) stays locked until Discussion Outcome is set to "Meeting Agreed".'}
+                  </span>
+                </div>
+              )}
+
               <div className="flex flex-wrap items-center justify-end gap-3 pt-4 border-t border-edge">
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant={outcome === 'MEETING_SCHEDULED' ? 'outline' : 'primary'}
                   onClick={() => handleSaveStep(false)}
                   disabled={isSaving || isRejectedLead}
                 >
                   Save Discussion Only
                 </Button>
+                {outcome === 'NOT_INTERESTED' && !isRejectedLead && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    icon={<XCircle className="w-4 h-4 text-red-600" />}
+                    onClick={() => {
+                      setRejectError(null);
+                      setRejectionReason('Not interested');
+                      if (notes.trim()) setRejectionRemarks(notes.trim());
+                      setIsRejectionConfirmed(false);
+                      setIsRejectDialogOpen(true);
+                    }}
+                    disabled={isSaving}
+                    className="text-red-700 border-red-300 hover:bg-red-50 font-semibold"
+                  >
+                    Mark as Rejected / Lost
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="primary"
                   onClick={() => handleSaveStep(true)}
-                  disabled={isSaving || isRejectedLead}
-                  icon={<ChevronRight className="w-4 h-4" />}
+                  disabled={isSaving || isRejectedLead || outcome !== 'MEETING_SCHEDULED'}
+                  title={
+                    outcome !== 'MEETING_SCHEDULED'
+                      ? 'Available only when Discussion Outcome is "Meeting Agreed"'
+                      : undefined
+                  }
+                  icon={
+                    outcome !== 'MEETING_SCHEDULED' ? (
+                      <Lock className="w-3.5 h-3.5" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4" />
+                    )
+                  }
                 >
                   {isSaving ? 'Saving...' : 'Save & Advance to Meeting Plan'}
                 </Button>
@@ -2308,7 +2425,7 @@ export const LeadWorkflowPage: React.FC = () => {
                         <option value="">No Manager / Self</option>
                         {managers.map((m) => (
                           <option key={m.id} value={m.id}>
-                            {m.name} ({m.email})
+                            {m.role === 'ADMIN' ? `Direct Admin — ${m.name}` : m.name} ({m.email})
                           </option>
                         ))}
                       </select>
@@ -2599,7 +2716,7 @@ export const LeadWorkflowPage: React.FC = () => {
                         <option value="">No Manager / Self</option>
                         {managers.map((m) => (
                           <option key={m.id} value={m.id}>
-                            {m.name} ({m.email})
+                            {m.role === 'ADMIN' ? `Direct Admin — ${m.name}` : m.name} ({m.email})
                           </option>
                         ))}
                       </select>

@@ -10,6 +10,10 @@ import { Card } from '../../../components/ui/Card.js';
 import { Button } from '../../../components/ui/Button.js';
 import { LeadQualificationMatrix, NewLeadItem } from '../types/dashboard.types.js';
 import { QualifyLeadModal } from './QualifyLeadModal.js';
+import {
+  getFollowUpOutcomeMeta,
+  getWorkflowStageMeta,
+} from '../../../utils/followUpOutcome.js';
 
 export interface LeadQualificationTableProps {
   matrix: LeadQualificationMatrix;
@@ -217,10 +221,12 @@ export const LeadQualificationTable: React.FC<LeadQualificationTableProps> = ({
                   <div className="px-6 pb-4 pt-1 divide-y divide-edge">
                     {matrix.leads.map((l) => {
                       const matchedLeadItem = activeLeads.find((al) => al.id === l.id);
+                      const stageMeta = getWorkflowStageMeta(l.currentStage);
+                      const outcomeMeta = getFollowUpOutcomeMeta(matchedLeadItem?.lastFollowUpOutcome);
                       return (
                         <div key={l.id} className="py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               <span className="font-bold text-content-primary">{l.name}</span>
                               <span
                                 className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
@@ -231,7 +237,17 @@ export const LeadQualificationTable: React.FC<LeadQualificationTableProps> = ({
                               >
                                 {l.priority === 'HOT' ? 'Hot' : 'Poss.'}
                               </span>
-                              <span className="text-[11px] text-content-muted">Stage: {l.currentStage}</span>
+                              <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold border ${stageMeta.cls}`}>
+                                {stageMeta.label}
+                              </span>
+                              {outcomeMeta && (
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${outcomeMeta.badgeCls}`}
+                                >
+                                  <span className={`w-1.5 h-1.5 rounded-full ${outcomeMeta.dotCls}`} />
+                                  {outcomeMeta.label}
+                                </span>
+                              )}
                             </div>
                             {l.notes && (
                               <p className="text-[11px] text-content-muted mt-0.5 line-clamp-1 italic">

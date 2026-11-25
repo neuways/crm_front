@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Plus,
   ArrowRight,
+  ArrowUpRight,
   Filter,
   PhoneCall,
   MapPin,
@@ -29,6 +30,7 @@ import { ErrorState } from "../../components/ui/ErrorState.js";
 import { PendingFollowUpTable } from "../sales-dashboard/components/FollowUpSummaryTable.js";
 import { NewEnquiryModal } from "../sales-dashboard/components/NewEnquiryModal.js";
 import { PropertyMappingModal } from "./components/PropertyMappingModal.js";
+import { TeamActivityAccountabilityPanel } from "../reporting/components/TeamActivityAccountabilityPanel.js";
 import { userService } from "../../services/user.service.js";
 import { enquiryService } from "../../services/enquiry.service.js";
 import { EmployeeProfile } from "../../types/user.types.js";
@@ -225,6 +227,8 @@ export const AdminDashboardPage: React.FC = () => {
                 badgeType="positive"
                 icon={<UserCheck className="h-5 w-5 text-status-success" />}
                 isMockData={false}
+                ariaLabel="View active employees in directory"
+                onClick={() => navigate("/admin/employees?status=active")}
               />
               <MetricCard
                 title="Managers"
@@ -234,6 +238,8 @@ export const AdminDashboardPage: React.FC = () => {
                 badgeType="info"
                 icon={<Shield className="h-5 w-5 text-indigo-600" />}
                 isMockData={false}
+                ariaLabel="View managers in employee directory"
+                onClick={() => navigate("/admin/employees?role=MANAGER")}
               />
               <MetricCard
                 title="Active Sales Agents"
@@ -243,6 +249,8 @@ export const AdminDashboardPage: React.FC = () => {
                 badgeType="info"
                 icon={<Briefcase className="h-5 w-5 text-sky-600" />}
                 isMockData={false}
+                ariaLabel="View active sales agents in directory"
+                onClick={() => navigate("/admin/employees?role=SALES&status=active")}
               />
               <MetricCard
                 title="Total Directory"
@@ -252,6 +260,8 @@ export const AdminDashboardPage: React.FC = () => {
                 badgeType="neutral"
                 icon={<Users className="h-5 w-5 text-brand-primary" />}
                 isMockData={false}
+                ariaLabel="View all employees in directory"
+                onClick={() => navigate("/admin/employees")}
               />
             </div>
           </div>
@@ -284,6 +294,8 @@ export const AdminDashboardPage: React.FC = () => {
                 badgeType="neutral"
                 icon={<Filter className="h-5 w-5 text-brand-primary" />}
                 isMockData={false}
+                ariaLabel="View active lead pipeline"
+                onClick={() => navigate("/leads?tab=active")}
               />
               <MetricCard
                 title="Pending Follow-ups"
@@ -295,6 +307,8 @@ export const AdminDashboardPage: React.FC = () => {
                 badgeType={pendingFollowUpCount === 0 ? "positive" : "warning"}
                 icon={<Clock className="h-5 w-5 text-amber-500" />}
                 isMockData={false}
+                ariaLabel="View pending follow-ups"
+                onClick={() => navigate("/follow-ups/pending")}
               />
               <MetricCard
                 title="Future Follow-ups"
@@ -304,6 +318,8 @@ export const AdminDashboardPage: React.FC = () => {
                 badgeType="info"
                 icon={<Calendar className="h-5 w-5 text-sky-500" />}
                 isMockData={false}
+                ariaLabel="View future follow-ups"
+                onClick={() => navigate("/follow-ups/future")}
               />
               <MetricCard
                 title="Completed Deals"
@@ -313,25 +329,24 @@ export const AdminDashboardPage: React.FC = () => {
                 badgeType="positive"
                 icon={<CheckCircle2 className="h-5 w-5 text-emerald-500" />}
                 isMockData={false}
+                ariaLabel="View completed deals"
+                onClick={() => navigate("/completed-deals")}
               />
-              <div
+              <MetricCard
+                title="Rejected / Lost"
+                subtitle={
+                  dealLostCount > 0
+                    ? `Rejected: ${explicitRejectedCount} • Lost: ${dealLostCount}`
+                    : "Disqualified & Closed"
+                }
+                value={rejectedLeadCount}
+                badgeText={`${rejectedLeadCount} Lost`}
+                badgeType="neutral"
+                icon={<XCircle className="h-5 w-5 text-red-500" />}
+                isMockData={false}
+                ariaLabel="View rejected and lost leads"
                 onClick={() => navigate("/admin/leads?tab=rejected")}
-                className="cursor-pointer"
-              >
-                <MetricCard
-                  title="Rejected / Lost"
-                  subtitle={
-                    dealLostCount > 0
-                      ? `Rejected: ${explicitRejectedCount} • Lost: ${dealLostCount}`
-                      : "Disqualified & Closed"
-                  }
-                  value={rejectedLeadCount}
-                  badgeText={`${rejectedLeadCount} Lost`}
-                  badgeType="neutral"
-                  icon={<XCircle className="h-5 w-5 text-red-500" />}
-                  isMockData={false}
-                />
-              </div>
+              />
             </div>
           </div>
 
@@ -358,14 +373,26 @@ export const AdminDashboardPage: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Stage 1: Follow-up */}
               <div
-                onClick={() => navigate("/leads")}
-                className="p-4 rounded-xl border border-blue-100 bg-blue-50/40 hover:bg-blue-50 hover:border-blue-300 transition-all cursor-pointer group"
+                role="button"
+                tabIndex={0}
+                aria-label="Filter leads by Stage 1 Follow-up"
+                onClick={() => navigate("/leads?tab=active&stage=FOLLOW_UP")}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    navigate("/leads?tab=active&stage=FOLLOW_UP");
+                  }
+                }}
+                className="p-4 rounded-xl border border-blue-100 bg-blue-50/40 hover:bg-blue-50 hover:border-blue-300 hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 transition-all cursor-pointer group"
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-brand-primary">
                     Stage 1
                   </span>
-                  <PhoneCall className="h-4 w-4 text-brand-primary group-hover:scale-110 transition-transform" />
+                  <div className="flex items-center gap-1">
+                    <ArrowUpRight className="h-3.5 w-3.5 text-brand-primary opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+                    <PhoneCall className="h-4 w-4 text-brand-primary group-hover:scale-110 transition-transform" />
+                  </div>
                 </div>
                 <h4 className="text-xs font-bold text-content-primary mb-1">
                   01. Follow-up
@@ -380,14 +407,26 @@ export const AdminDashboardPage: React.FC = () => {
 
               {/* Stage 2: Meeting Plan */}
               <div
-                onClick={() => navigate("/leads")}
-                className="p-4 rounded-xl border border-purple-100 bg-purple-50/40 hover:bg-purple-50 hover:border-purple-300 transition-all cursor-pointer group"
+                role="button"
+                tabIndex={0}
+                aria-label="Filter leads by Stage 2 Meeting Plan"
+                onClick={() => navigate("/leads?tab=active&stage=MEETING_PLAN")}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    navigate("/leads?tab=active&stage=MEETING_PLAN");
+                  }
+                }}
+                className="p-4 rounded-xl border border-purple-100 bg-purple-50/40 hover:bg-purple-50 hover:border-purple-300 hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 transition-all cursor-pointer group"
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-purple-700">
                     Stage 2
                   </span>
-                  <Users className="h-4 w-4 text-purple-700 group-hover:scale-110 transition-transform" />
+                  <div className="flex items-center gap-1">
+                    <ArrowUpRight className="h-3.5 w-3.5 text-purple-700 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+                    <Users className="h-4 w-4 text-purple-700 group-hover:scale-110 transition-transform" />
+                  </div>
                 </div>
                 <h4 className="text-xs font-bold text-content-primary mb-1">
                   02. Meeting Plan
@@ -402,14 +441,26 @@ export const AdminDashboardPage: React.FC = () => {
 
               {/* Stage 3: Site Visit Plan */}
               <div
-                onClick={() => navigate("/leads")}
-                className="p-4 rounded-xl border border-amber-100 bg-amber-50/40 hover:bg-amber-50 hover:border-amber-300 transition-all cursor-pointer group"
+                role="button"
+                tabIndex={0}
+                aria-label="Filter leads by Stage 3 Site Visit Plan"
+                onClick={() => navigate("/leads?tab=active&stage=SITE_VISIT_PLAN")}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    navigate("/leads?tab=active&stage=SITE_VISIT_PLAN");
+                  }
+                }}
+                className="p-4 rounded-xl border border-amber-100 bg-amber-50/40 hover:bg-amber-50 hover:border-amber-300 hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 transition-all cursor-pointer group"
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700">
                     Stage 3
                   </span>
-                  <MapPin className="h-4 w-4 text-amber-700 group-hover:scale-110 transition-transform" />
+                  <div className="flex items-center gap-1">
+                    <ArrowUpRight className="h-3.5 w-3.5 text-amber-700 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+                    <MapPin className="h-4 w-4 text-amber-700 group-hover:scale-110 transition-transform" />
+                  </div>
                 </div>
                 <h4 className="text-xs font-bold text-content-primary mb-1">
                   03. Site Visit Plan
@@ -425,14 +476,26 @@ export const AdminDashboardPage: React.FC = () => {
 
               {/* Stage 4: Deal Done */}
               <div
-                onClick={() => navigate("/sales/completed-deals")}
-                className="p-4 rounded-xl border border-emerald-100 bg-emerald-50/40 hover:bg-emerald-50 hover:border-emerald-300 transition-all cursor-pointer group"
+                role="button"
+                tabIndex={0}
+                aria-label="View Stage 4 Completed Deals"
+                onClick={() => navigate("/completed-deals")}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    navigate("/completed-deals");
+                  }
+                }}
+                className="p-4 rounded-xl border border-emerald-100 bg-emerald-50/40 hover:bg-emerald-50 hover:border-emerald-300 hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/50 transition-all cursor-pointer group"
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800">
                     Stage 4
                   </span>
-                  <CheckCircle2 className="h-4 w-4 text-emerald-700 group-hover:scale-110 transition-transform" />
+                  <div className="flex items-center gap-1">
+                    <ArrowUpRight className="h-3.5 w-3.5 text-emerald-700 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+                    <CheckCircle2 className="h-4 w-4 text-emerald-700 group-hover:scale-110 transition-transform" />
+                  </div>
                 </div>
                 <h4 className="text-xs font-bold text-content-primary mb-1">
                   04. Deal Done
@@ -476,6 +539,9 @@ export const AdminDashboardPage: React.FC = () => {
             </div>
           )}
 
+          {/* Section 4B: Daily Work & Call Accountability */}
+          <TeamActivityAccountabilityPanel viewerRole="ADMIN" />
+
           {/* Section 5: Quick Administration Navigation */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
             <Card
@@ -511,8 +577,8 @@ export const AdminDashboardPage: React.FC = () => {
                 Leads & Enquiries
               </h4>
               <p className="text-xs text-content-muted">
-                Inspect organization-wide active leads, review stages, assigned
-                agents, and next follow-up dates.
+                Inspect organization-wide active leads, follow-up outcomes,
+                assigned agents, and scheduled callbacks.
               </p>
             </Card>
 

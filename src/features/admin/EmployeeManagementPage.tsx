@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
   Users,
   UserPlus,
@@ -29,9 +29,26 @@ import { EmployeeProfile } from '../../types/user.types.js';
 import { userService } from '../../services/user.service.js';
 import { useAuth } from '../../context/AuthContext.js';
 
+const parseRoleFilterParam = (value: string | null): 'ALL' | 'ADMIN' | 'MANAGER' | 'SALES' => {
+  const upper = value?.toUpperCase();
+  if (upper === 'ADMIN' || upper === 'MANAGER' || upper === 'SALES') {
+    return upper;
+  }
+  return 'ALL';
+};
+
+const parseStatusFilterParam = (value: string | null): 'ALL' | 'ACTIVE' | 'INACTIVE' => {
+  const upper = value?.toUpperCase();
+  if (upper === 'ACTIVE' || upper === 'INACTIVE') {
+    return upper;
+  }
+  return 'ALL';
+};
+
 export const EmployeeManagementPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user: currentUser } = useAuth();
   const [employees, setEmployees] = useState<EmployeeProfile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -39,8 +56,17 @@ export const EmployeeManagementPage: React.FC = () => {
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState<'ALL' | 'ADMIN' | 'MANAGER' | 'SALES'>('ALL');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
+  const [roleFilter, setRoleFilter] = useState<'ALL' | 'ADMIN' | 'MANAGER' | 'SALES'>(() =>
+    parseRoleFilterParam(searchParams.get('role'))
+  );
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>(() =>
+    parseStatusFilterParam(searchParams.get('status'))
+  );
+
+  useEffect(() => {
+    setRoleFilter(parseRoleFilterParam(searchParams.get('role')));
+    setStatusFilter(parseStatusFilterParam(searchParams.get('status')));
+  }, [searchParams]);
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -191,10 +217,12 @@ export const EmployeeManagementPage: React.FC = () => {
   // Filtered employees
   const filteredEmployees = useMemo(() => {
     return employees.filter((emp) => {
+      const normalizedSearch = searchQuery.toLowerCase();
       const matchesSearch =
         searchQuery === '' ||
-        emp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        emp.email.toLowerCase().includes(searchQuery.toLowerCase());
+        emp.name.toLowerCase().includes(normalizedSearch) ||
+        emp.email.toLowerCase().includes(normalizedSearch) ||
+        (emp.phone || '').toLowerCase().includes(normalizedSearch);
 
       const matchesRole = roleFilter === 'ALL' || emp.role === roleFilter;
 
@@ -288,6 +316,12 @@ export const EmployeeManagementPage: React.FC = () => {
           badgeType="neutral"
           icon={<Users className="h-5 w-5 text-brand-primary" />}
           isMockData={false}
+          ariaLabel="Show all employees in directory"
+          onClick={() => {
+            setRoleFilter('ALL');
+            setStatusFilter('ALL');
+            setSearchParams({}, { replace: true });
+          }}
         />
         <MetricCard
           title="Sales Agents"
@@ -297,6 +331,12 @@ export const EmployeeManagementPage: React.FC = () => {
           badgeType="info"
           icon={<Briefcase className="h-5 w-5 text-sky-600" />}
           isMockData={false}
+          ariaLabel="Filter directory by Sales Agents"
+          onClick={() => {
+            setRoleFilter('SALES');
+            setStatusFilter('ALL');
+            setSearchParams({ role: 'SALES' }, { replace: true });
+          }}
         />
         <MetricCard
           title="Managers"
@@ -306,6 +346,12 @@ export const EmployeeManagementPage: React.FC = () => {
           badgeType="info"
           icon={<Shield className="h-5 w-5 text-indigo-600" />}
           isMockData={false}
+          ariaLabel="Filter directory by Managers"
+          onClick={() => {
+            setRoleFilter('MANAGER');
+            setStatusFilter('ALL');
+            setSearchParams({ role: 'MANAGER' }, { replace: true });
+          }}
         />
         <MetricCard
           title="Active Accounts"
@@ -315,6 +361,12 @@ export const EmployeeManagementPage: React.FC = () => {
           badgeType="positive"
           icon={<UserCheck className="h-5 w-5 text-status-success" />}
           isMockData={false}
+          ariaLabel="Filter directory by active accounts"
+          onClick={() => {
+            setRoleFilter('ALL');
+            setStatusFilter('ACTIVE');
+            setSearchParams({ status: 'active' }, { replace: true });
+          }}
         />
       </div>
 
@@ -329,7 +381,7 @@ export const EmployeeManagementPage: React.FC = () => {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by employee name or email address..."
+              placeholder="Search by employee name, email, or mobile number..."
               className="w-full pl-9 pr-3 py-2 bg-surface-card border border-edge rounded-lg text-xs text-content-primary placeholder:text-content-muted focus:outline-none focus:ring-2 focus:ring-brand-primary"
             />
           </div>
@@ -389,6 +441,7 @@ export const EmployeeManagementPage: React.FC = () => {
                 <tr className="bg-surface-subtle/80 border-b border-edge text-content-muted font-semibold uppercase tracking-wider text-[11px]">
                   <th className="py-3 px-4">Employee</th>
                   <th className="py-3 px-4">Email Address</th>
+                  <th className="py-3 px-4">Mobile Number</th>
                   <th className="py-3 px-4">Role</th>
                   <th className="py-3 px-4">Manager</th>
                   <th className="py-3 px-4">Status</th>
@@ -445,6 +498,11 @@ export const EmployeeManagementPage: React.FC = () => {
                         {emp.email}
                       </td>
 
+                      {/* Mobile Number */}
+                      <td className="py-3 px-4 text-content-secondary font-mono text-xs whitespace-nowrap">
+                        {emp.phone ? emp.phone : <span className="text-content-subtle italic font-sans">—</span>}
+                      </td>
+
                       {/* Role */}
                       <td className="py-3 px-4">
                         {getRoleBadge(emp.role)}
@@ -452,16 +510,29 @@ export const EmployeeManagementPage: React.FC = () => {
 
                       {/* Assigned Manager */}
                       <td className="py-3 px-4">
-                        {emp.role === 'SALES' ? (
-                          emp.managerName ? (
+                        {emp.role === 'SALES' ? (() => {
+                          const isAdminSupervisor =
+                            emp.managerRole === 'ADMIN' ||
+                            (emp.managerId
+                              ? employees.some((e) => e.id === emp.managerId && e.role === 'ADMIN')
+                              : false);
+
+                          if (isAdminSupervisor || !emp.managerName) {
+                            return (
+                              <span className="inline-flex items-center gap-1 font-medium text-content-secondary text-[11px]">
+                                <Shield className="h-3 w-3 text-brand-primary" />
+                                {emp.managerName ? `Direct Admin — ${emp.managerName}` : 'Direct Admin'}
+                              </span>
+                            );
+                          }
+
+                          return (
                             <span className="inline-flex items-center gap-1 font-semibold text-content-primary">
                               <Shield className="h-3 w-3 text-indigo-500" />
                               {emp.managerName}
                             </span>
-                          ) : (
-                            <span className="text-content-subtle text-[11px] italic">Direct</span>
-                          )
-                        ) : (
+                          );
+                        })() : (
                           <span className="text-content-subtle text-[11px]">—</span>
                         )}
                       </td>
@@ -585,6 +656,7 @@ export const EmployeeManagementPage: React.FC = () => {
         isOpen={Boolean(editingEmployee)}
         employee={editingEmployee}
         managers={employees.filter((e) => e.role === 'MANAGER')}
+        admins={employees.filter((e) => e.role === 'ADMIN' && e.isActive)}
         onClose={() => setEditingEmployee(null)}
         onEmployeeUpdated={handleEmployeeUpdated}
       />

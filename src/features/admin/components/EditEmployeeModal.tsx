@@ -3,13 +3,17 @@ import { X, UserCheck, Eye, EyeOff, Sparkles, AlertCircle, Shield, Briefcase, Ke
 import { Button } from '../../../components/ui/Button.js';
 import { EmployeeProfile, UpdateEmployeeInput } from '../../../types/user.types.js';
 import { userService } from '../../../services/user.service.js';
+import { useAuth } from '../../../context/AuthContext.js';
 import { PropertiesSelect } from './PropertiesSelect.js';
+
+const INDIAN_MOBILE_REGEX = /^[6-9]\d{9}$/;
 
 export interface EditEmployeeModalProps {
   isOpen: boolean;
   onClose: () => void;
   employee: EmployeeProfile | null;
   managers: EmployeeProfile[];
+  admins?: EmployeeProfile[];
   onEmployeeUpdated: (updatedEmployee: EmployeeProfile) => void;
 }
 
@@ -18,9 +22,13 @@ export const EditEmployeeModal: React.FC<EditEmployeeModalProps> = ({
   onClose,
   employee,
   managers,
+  admins = [],
   onEmployeeUpdated,
 }) => {
+  const { user: currentUser } = useAuth();
   const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [role, setRole] = useState<'MANAGER' | 'SALES'>('SALES');
   const [managerId, setManagerId] = useState<string>('');
   const [propertyIds, setPropertyIds] = useState<string[]>([]);
@@ -32,8 +40,14 @@ export const EditEmployeeModal: React.FC<EditEmployeeModalProps> = ({
   useEffect(() => {
     if (employee) {
       setName(employee.name);
+      setPhone(employee.phone || '');
+      setPhoneError(null);
       setRole(employee.role === 'ADMIN' ? 'MANAGER' : (employee.role as 'MANAGER' | 'SALES'));
-      setManagerId(employee.managerId || '');
+      if (!employee.managerId || employee.managerId === currentUser?.id) {
+        setManagerId('');
+      } else {
+        setManagerId(employee.managerId);
+      }
       setPropertyIds(
         employee.assignedPropertyIds ||
           employee.assignedProperties?.map((p) => p.id) ||
@@ -42,7 +56,7 @@ export const EditEmployeeModal: React.FC<EditEmployeeModalProps> = ({
       setResetPassword('');
       setErrorMessage(null);
     }
-  }, [employee]);
+  }, [employee, currentUser?.id]);
 
   if (!isOpen || !employee) return null;
 
@@ -67,10 +81,19 @@ export const EditEmployeeModal: React.FC<EditEmployeeModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    setPhoneError(null);
 
     const trimmedName = name.trim();
     if (!trimmedName || trimmedName.length < 2) {
       setErrorMessage('Full name must be at least 2 characters.');
+      return;
+    }
+
+    const trimmedPhone = phone.trim();
+    if (trimmedPhone && !INDIAN_MOBILE_REGEX.test(trimmedPhone)) {
+      const msg = 'Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.';
+      setPhoneError(msg);
+      setErrorMessage(msg);
       return;
     }
 
@@ -83,8 +106,9 @@ export const EditEmployeeModal: React.FC<EditEmployeeModalProps> = ({
     try {
       const payload: UpdateEmployeeInput = {
         name: trimmedName,
+        phone: trimmedPhone || null,
         role: employee.role === 'ADMIN' ? undefined : role,
-        managerId: role === 'SALES' ? (managerId || null) : null,
+        managerId: role === 'SALES' ? (managerId || currentUser?.id || null) : null,
         temporaryPassword: resetPassword.trim() ? resetPassword.trim() : undefined,
         propertyIds: role === 'SALES' ? propertyIds : [],
       };
@@ -159,6 +183,42 @@ export const EditEmployeeModal: React.FC<EditEmployeeModalProps> = ({
             />
           </div>
 
+          {/* Mobile Number */}
+          <div>
+            <label className="block text-xs font-semibold text-content-primary mb-1">
+              Mobile Number
+            </label>
+            <input
+              type="tel"
+              inputMode="numeric"
+              maxLength={10}
+              value={phone}
+              onChange={(e) => {
+                const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 10);
+                setPhone(digitsOnly);
+                if (phoneError) setPhoneError(null);
+              }}
+              onBlur={() => {
+                if (phone.trim() && !INDIAN_MOBILE_REGEX.test(phone.trim())) {
+                  setPhoneError('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
+                }
+              }}
+              placeholder="e.g. 9876543210"
+              className={`w-full px-3 py-2 bg-surface-card border rounded-lg text-xs text-content-primary placeholder:text-content-muted focus:outline-none focus:ring-2 font-mono ${
+                phoneError
+                  ? 'border-status-danger focus:ring-status-danger'
+                  : 'border-edge focus:ring-brand-primary'
+              }`}
+            />
+            {phoneError ? (
+              <span className="text-[10px] text-status-danger mt-1 block">{phoneError}</span>
+            ) : (
+              <span className="text-[10px] text-content-muted mt-1 block">
+                10-digit Indian mobile number starting with 6, 7, 8, or 9.
+              </span>
+            )}
+          </div>
+
           {/* Role Selection (Read-only if Admin) */}
           {employee.role === 'ADMIN' ? (
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-content-muted">
@@ -219,7 +279,18 @@ export const EditEmployeeModal: React.FC<EditEmployeeModalProps> = ({
                 onChange={(e) => setManagerId(e.target.value)}
                 className="w-full px-3 py-2 bg-surface-card border border-edge rounded-lg text-xs text-content-primary focus:outline-none focus:ring-2 focus:ring-brand-primary"
               >
-                <option value="">No Manager Assigned (Direct Executive)</option>
+                <option value="">
+                  {currentUser?.name
+                    ? `Direct Admin — ${currentUser.name} (Reports to Admin)`
+                    : 'Direct Admin (Reports to Admin)'}
+                </option>
+                {admins
+                  .filter((a) => a.isActive && a.id !== currentUser?.id && a.id !== employee.id)
+                  .map((a) => (
+                    <option key={a.id} value={a.id}>
+                      Direct Admin — {a.name} ({a.email})
+                    </option>
+                  ))}
                 {managers
                   .filter((m) => m.isActive && m.id !== employee.id)
                   .map((m) => (
@@ -229,7 +300,7 @@ export const EditEmployeeModal: React.FC<EditEmployeeModalProps> = ({
                   ))}
               </select>
               <span className="text-[10px] text-content-muted mt-1 block">
-                Assigns this sales agent to a reporting manager for meeting plans and team oversight.
+                Select a reporting manager, or leave as Direct Admin to assign this sales agent directly under Admin oversight.
               </span>
             </div>
           )}

@@ -178,7 +178,17 @@ export interface IEnquiry {
   status: EnquiryStatus;
   isActive: boolean;
   isDoNotContact?: boolean;
-  assignedTo?: string | { id: string; name: string; email?: string; role?: string };
+  assignedTo?:
+    | string
+    | {
+        id: string;
+        _id?: string;
+        name: string;
+        email?: string;
+        role?: string;
+        managerId?: string | { id?: string; _id?: string; name?: string; role?: string } | null;
+        managerName?: string | null;
+      };
   assignedToName?: string;
   unassignedReason?: string;
   managerId?: string | null;
@@ -190,6 +200,8 @@ export interface IEnquiry {
   rejection?: IRejectionDetails;
   nextFollowUpDate?: string;
   nextFollowUpTime?: string;
+  lastFollowUpOutcome?: FollowUpOutcome;
+  lastFollowUpAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -356,8 +368,11 @@ export interface ApiResponse<T> {
 export type FollowUpOutcome =
   | 'CONNECTED'
   | 'NO_ANSWER'
+  | 'SWITCHED_OFF'
   | 'CALL_BACK_REQUESTED'
   | 'MEETING_SCHEDULED'
+  | 'SITE_VISIT_COMPLETED'
+  | 'DEAL_DONE'
   | 'NOT_INTERESTED'
   | 'OTHER';
 
@@ -520,6 +535,7 @@ export interface ActiveManagerSummary {
   id: string;
   name: string;
   email: string;
+  role?: 'ADMIN' | 'MANAGER';
 }
 
 export interface WorkflowStepInput {
@@ -588,6 +604,7 @@ export interface EligibleAgentSummary {
   canAssign: boolean;
   isAssignedToCurrentManager: boolean;
   statusLabel: TeamMembershipStatusLabel;
+  activeLeadsCount?: number;
 }
 
 export interface GetTeamRosterResponse {
@@ -685,5 +702,81 @@ export interface GetDoNotContactResponse {
     details?: DncDetails | null;
   };
   message?: string;
+}
+
+export type ReportPeriod = 'today' | 'yesterday' | '7d' | 'month' | 'custom' | 'all';
+
+export interface QuickActivityPayload {
+  purpose?: 'CALL' | 'WHATSAPP' | 'EMAIL' | 'MEETING' | 'SITE_VISIT' | 'OTHER';
+  outcome: FollowUpOutcome;
+  notes?: string;
+  callDurationSeconds?: number;
+  nextFollowUpDate?: string;
+  nextFollowUpTime?: string;
+  advanceStage?: boolean;
+}
+
+export type AccountabilityStatus = 'ACTIVE_TODAY' | 'LOW_ACTIVITY' | 'INACTIVE';
+
+export interface EmployeeWorkSummary {
+  employeeId: string;
+  name: string;
+  email: string;
+  role: 'MANAGER' | 'SALES' | 'ADMIN';
+  isActive: boolean;
+  managerId: string | null;
+  managerName: string | null;
+  totalCallsLogged: number;
+  connectedCount: number;
+  noAnswerBusyCount: number;
+  switchedOffCount: number;
+  callbackRequestedCount: number;
+  meetingAgreedCount: number;
+  notInterestedCount: number;
+  meetingsScheduledCount: number;
+  meetingsCompletedCount: number;
+  siteVisitsCompletedCount: number;
+  dealsClosedCount: number;
+  totalDealValue: number;
+  pendingOverdueCount: number;
+  pendingTodayCount: number;
+  totalActivitiesCount: number;
+  lastActiveAt: string | null;
+  activityStatus: AccountabilityStatus;
+}
+
+export interface TeamActivityReportSummary {
+  totalCallsLogged: number;
+  connectedCount: number;
+  unansweredCount: number;
+  callbackRequestedCount: number;
+  meetingsCount: number;
+  siteVisitsCompletedCount: number;
+  dealsClosedCount: number;
+  totalDealValue: number;
+  pendingOverdueCount: number;
+  activeEmployeesCount: number;
+  lowActivityEmployeesCount: number;
+  inactiveEmployeesCount: number;
+}
+
+export interface TeamActivityReportData {
+  period: ReportPeriod;
+  rangeStart?: string;
+  rangeEnd?: string;
+  employees: EmployeeWorkSummary[];
+  managers: Array<{ id: string; name: string }>;
+  summary: TeamActivityReportSummary;
+}
+
+export interface ActivityFeedData {
+  activities: any[];
+  employees: Array<{ id: string; name: string; role: string }>;
+  pagination?: PaginationMeta;
+}
+
+export interface SubmitWorkReportPayload {
+  summaryNotes?: string;
+  period?: ReportPeriod;
 }
 

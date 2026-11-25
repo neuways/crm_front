@@ -21,7 +21,12 @@ import {
   FileEdit,
   Check,
   Grid3X3,
+  Lock,
 } from 'lucide-react';
+import {
+  getFollowUpOutcomeMeta,
+  formatFollowUpScheduleLabel,
+} from '../../../utils/followUpOutcome.js';
 import { Button } from '../../../components/ui/Button.js';
 import { NewLeadItem } from '../types/dashboard.types.js';
 import {
@@ -318,16 +323,28 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
 
   // Highest unlocked step based on completion invariants
   const hasCompletedDiscussion = Boolean(
-    historyList.some(
-      (t) =>
-        t.status === 'COMPLETED' ||
-        (!t.isInitialTask && t.notes && t.notes !== 'System initialized pending follow-up task')
-    ) ||
-    activityList.some(
-      (a) => a.metadata?.step === 'FOLLOW_UP' || a.activityType === 'FOLLOW_UP_COMPLETED'
-    )
+    leadDetail?.lastFollowUpOutcome
+      ? leadDetail.lastFollowUpOutcome === 'MEETING_SCHEDULED'
+      : historyList.some(
+          (t) =>
+            t.outcome === 'MEETING_SCHEDULED' &&
+            (t.status === 'COMPLETED' ||
+              (!t.isInitialTask && t.notes && t.notes !== 'System initialized pending follow-up task'))
+        ) ||
+        activityList.some(
+          (a) =>
+            (a.metadata?.step === 'FOLLOW_UP' || a.activityType === 'FOLLOW_UP_COMPLETED') &&
+            a.metadata?.outcome === 'MEETING_SCHEDULED'
+        )
   );
   const isStep1Done = Boolean(leadDetail && (leadDetail.currentStage !== 'FOLLOW_UP' || hasCompletedDiscussion));
+  const modalOutcomeMeta = getFollowUpOutcomeMeta(
+    leadDetail?.lastFollowUpOutcome || lead?.lastFollowUpOutcome
+  );
+  const modalScheduleLabel = formatFollowUpScheduleLabel(
+    leadDetail?.nextFollowUpDate || lead?.nextFollowUpDate,
+    leadDetail?.nextFollowUpTime || lead?.nextFollowUpTime
+  );
   const isMeetingCancelled = Boolean(leadDetail?.meetingPlan?.isCancelled);
   const isSiteVisitCancelled = Boolean(leadDetail?.siteVisitPlan?.isCancelled);
 
@@ -397,6 +414,13 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
 
     // Validation for Step 1
     if (activeStep === 1) {
+      if (advance && outcome !== 'MEETING_SCHEDULED') {
+        showWarningPopup(
+          'Cannot proceed to Meeting Plan until Follow-up Outcome is set to "Meeting Agreed".',
+          'modal-follow-up-outcome'
+        );
+        return;
+      }
       if (!notes.trim()) {
         showWarningPopup('Follow-up remark/notes cannot be empty.', 'modal-follow-up-notes');
         return;
@@ -589,12 +613,38 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
         successMsg = 'Deal finalized and saved successfully.';
       }
 
-      showSuccessPopup(successMsg);
-
+      const savedNotesSnapshot = notes.trim();
       // Refresh local modal data and parent dashboard
       // Note: loadAllLeadData automatically syncs activeStep with the updated currentStage from the backend
       await loadAllLeadData(lead.id);
       onFollowUpLogged();
+
+      if (activeStep === 1 && outcome === 'NOT_INTERESTED' && leadStatus === 'ACTIVE') {
+        const confirmLost = await Swal.fire({
+          icon: 'warning',
+          title: 'Follow-Up Logged as Not Interested / Lost',
+          text: 'Step 2 stays locked. Would you like to mark this lead as Rejected / Lost now?',
+          showCancelButton: true,
+          confirmButtonText: 'Yes, Mark Rejected / Lost',
+          cancelButtonText: 'Keep Active for Now',
+          confirmButtonColor: '#dc2626',
+        });
+        if (confirmLost.isConfirmed) {
+          const rejectRes = await enquiryService.rejectLead(lead.id, {
+            reason: 'Not interested',
+            remarks: savedNotesSnapshot,
+          });
+          if (rejectRes.success) {
+            showSuccessPopup(`Lead "${lead.name}" has been marked as Rejected / Lost.`);
+            onFollowUpLogged();
+            onClose();
+          } else {
+            showErrorPopup(rejectRes.message || 'Failed to mark lead as Rejected / Lost.');
+          }
+        }
+      } else {
+        showSuccessPopup(successMsg);
+      }
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : 'A network error occurred.';
       setErrorMessage(errorMsg);
@@ -629,6 +679,17 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                   <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-blue-100 text-brand-primary">
                     Sequential Pipeline
                   </span>
+                  {modalOutcomeMeta && (
+                    <span
+                      className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${modalOutcomeMeta.badgeCls}`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${modalOutcomeMeta.dotCls}`} />
+                      <span>{modalOutcomeMeta.label}</span>
+                      {modalScheduleLabel && (
+                        <span className="opacity-85">• {modalScheduleLabel}</span>
+                      )}
+                    </span>
+                  )}
                 </div>
                 <span className="text-xs text-content-muted truncate block">
                   Prospect: <strong className="text-content-secondary">{lead.name}</strong> ({lead.mobile})
@@ -1098,17 +1159,29 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                       Follow-up Outcome <span className="text-red-500">*</span>
                     </label>
                     <select
+                      id="modal-follow-up-outcome"
                       value={outcome}
                       onChange={(e) => setOutcome(e.target.value as any)}
                       className="w-full p-2 bg-surface-card border border-edge rounded-lg text-xs font-medium text-content-primary focus:outline-none focus:border-brand-primary"
                     >
-                      <option value="CONNECTED">Connected — Discussion Completed</option>
-                      <option value="CALL_BACK_REQUESTED">Call Back Requested (Schedule Callback)</option>
-                      <option value="NO_ANSWER">No Answer / Line Busy / Unreachable</option>
-                      <option value="MEETING_SCHEDULED">Meeting / Consultation Scheduled</option>
-                      <option value="NOT_INTERESTED">Not Interested / Disqualified</option>
-                      <option value="OTHER">Other Outcome</option>
+                      <option value="CONNECTED">Connected & Discussed</option>
+                      <option value="CALL_BACK_REQUESTED">Call Back Requested</option>
+                      <option value="NO_ANSWER">No Answer / Busy</option>
+                      <option value="SWITCHED_OFF">Switched Off / Not Reachable</option>
+                      <option value="MEETING_SCHEDULED">Meeting Agreed</option>
+                      <option value="NOT_INTERESTED">Not Interested / Lost</option>
+                      <option value="OTHER">Other</option>
                     </select>
+                    {outcome !== 'MEETING_SCHEDULED' && (
+                      <p className="mt-1.5 text-[11px] text-amber-700 flex items-center gap-1 font-medium">
+                        <Lock className="w-3 h-3 shrink-0" />
+                        <span>
+                          {outcome === 'NOT_INTERESTED'
+                            ? 'Step 2 (Meeting Plan) stays locked. Save log to mark lead as Rejected / Lost.'
+                            : 'Step 2 (Meeting Plan) unlocks only when outcome is "Meeting Agreed".'}
+                        </span>
+                      </p>
+                    )}
                   </div>
 
                   {/* Conditional Next Follow-Up Schedule */}
@@ -1312,7 +1385,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                           <option value="">None / Not Assigned</option>
                           {managers.map((m) => (
                             <option key={m.id} value={m.id}>
-                              {m.name} ({m.email})
+                              {m.role === 'ADMIN' ? `Direct Admin — ${m.name}` : m.name} ({m.email})
                             </option>
                           ))}
                         </select>
@@ -1531,7 +1604,7 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                           <option value="">None / Not Assigned</option>
                           {managers.map((m) => (
                             <option key={m.id} value={m.id}>
-                              {m.name} ({m.email})
+                              {m.role === 'ADMIN' ? `Direct Admin — ${m.name}` : m.name} ({m.email})
                             </option>
                           ))}
                         </select>
@@ -1792,12 +1865,14 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                 {/* Save Current Step Data (Keeps current step) */}
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant={activeStep === 1 && outcome !== 'MEETING_SCHEDULED' ? 'primary' : 'outline'}
                   onClick={() => handleSaveStep(false)}
                   disabled={isSubmitting}
                   icon={isSubmitting ? <Loader2 className="h-3 w-3 animate-spin" /> : undefined}
                 >
-                  Save Step {activeStep}
+                  {activeStep === 1 && outcome !== 'MEETING_SCHEDULED'
+                    ? 'Save Follow-Up Status'
+                    : `Save Step ${activeStep}`}
                 </Button>
 
                 {/* Advance or Finalize Button */}
@@ -1808,12 +1883,20 @@ export const FollowUpModal: React.FC<FollowUpModalProps> = ({
                     onClick={() => handleSaveStep(true)}
                     disabled={
                       isSubmitting ||
+                      (activeStep === 1 && outcome !== 'MEETING_SCHEDULED') ||
                       (activeStep === 2 && !isMeetingCompleted) ||
                       (activeStep === 3 && !isSiteVisitCompleted)
+                    }
+                    title={
+                      activeStep === 1 && outcome !== 'MEETING_SCHEDULED'
+                        ? 'Select "Meeting Agreed" as Follow-up Outcome to unlock Meeting Plan'
+                        : undefined
                     }
                     icon={
                       isSubmitting ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : activeStep === 1 && outcome !== 'MEETING_SCHEDULED' ? (
+                        <Lock className="h-3.5 w-3.5" />
                       ) : (
                         <ArrowRight className="h-3.5 w-3.5" />
                       )
