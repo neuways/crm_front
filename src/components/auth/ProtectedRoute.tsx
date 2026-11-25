@@ -13,8 +13,20 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   allowedRoles,
   children,
 }) => {
-  const { isAuthenticated, isDemoMode, user } = useAuth();
+  const { isAuthenticated, isDemoMode, user, isLoading } = useAuth();
   const location = useLocation();
+
+  // If initial session verification is in flight, display loading indicator to avoid premature redirect
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-surface-page flex items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-brand-primary border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs font-semibold text-content-muted">Verifying session...</span>
+        </div>
+      </div>
+    );
+  }
 
   // If unauthenticated and not in explicit demo mode, redirect to /login
   if (!isAuthenticated && !isDemoMode) {

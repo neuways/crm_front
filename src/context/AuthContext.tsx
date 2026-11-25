@@ -17,7 +17,7 @@ const USER_KEY = 'nueways_user';
 const DEMO_MODE_KEY = 'nueways_demo_mode';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
+  const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<UserProfile | null>(() => {
     try {
       const stored = localStorage.getItem(USER_KEY);
@@ -31,17 +31,81 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return sessionStorage.getItem(DEMO_MODE_KEY) === 'true';
   });
 
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Centralized logout: Clears client-side session tokens
-  // Note: Backend employs stateless JWTs; client clearance concludes the session.
+  // Centralized logout: Clears client-side session and invalidates server-side cookie
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
     sessionStorage.removeItem(DEMO_MODE_KEY);
+    api.setToken(null);
     setToken(null);
     setUser(null);
     setIsDemoMode(false);
+
+    // Concurrently trigger backend logout to clear the HttpOnly session cookie
+    authService.logout().catch((err) => {
+      console.error('Logout error clearing session cookie on server:', err);
+    });
+  }, []);
+
+  // Restore session on application startup via HttpOnly cookie
+  useEffect(() => {
+    let isMounted = true;
+
+    const restoreSession = async () => {
+      // If user is currently in demo mode, preserve demo context
+      if (sessionStorage.getItem(DEMO_MODE_KEY) === 'true') {
+        if (isMounted) setIsLoading(false);
+        return;
+      }
+
+      try {
+        const res = await authService.getMe();
+        if (!isMounted) return;
+
+        if (res.success && res.data?.user) {
+          const restoredUser: UserProfile = {
+            id: res.data.user.id,
+            name: res.data.user.name,
+            email: res.data.user.email,
+            role: res.data.user.role,
+            isActive: res.data.user.isActive ?? true,
+            mustChangePassword: Boolean(res.data.user.mustChangePassword),
+            avatarUrl: res.data.user.avatarUrl,
+          };
+
+          setUser(restoredUser);
+          localStorage.setItem(USER_KEY, JSON.stringify(restoredUser));
+          // Proactively remove any legacy long-lived token from localStorage
+          localStorage.removeItem(TOKEN_KEY);
+        } else {
+          // No valid session cookie found or session expired
+          setUser(null);
+          setToken(null);
+          api.setToken(null);
+          localStorage.removeItem(USER_KEY);
+          localStorage.removeItem(TOKEN_KEY);
+        }
+      } catch {
+        if (!isMounted) return;
+        setUser(null);
+        setToken(null);
+        api.setToken(null);
+        localStorage.removeItem(USER_KEY);
+        localStorage.removeItem(TOKEN_KEY);
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    restoreSession();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // Listen to 401 Unauthorized interceptor from API client
@@ -91,11 +155,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         mustChangePassword: Boolean(res.data.user.mustChangePassword),
       };
 
-      // Persist authenticated credentials in local storage
-      localStorage.setItem(TOKEN_KEY, receivedToken);
+      // Do not store sensitive JWT in localStorage; session is securely persisted in HttpOnly cookie
+      localStorage.removeItem(TOKEN_KEY);
       localStorage.setItem(USER_KEY, JSON.stringify(receivedUser));
       sessionStorage.removeItem(DEMO_MODE_KEY);
 
+      api.setToken(receivedToken);
       setToken(receivedToken);
       setUser(receivedUser);
       setIsDemoMode(false);
@@ -133,11 +198,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         mustChangePassword: Boolean(res.data.user.mustChangePassword),
       };
 
-      // Persist authenticated credentials in local storage
-      localStorage.setItem(TOKEN_KEY, receivedToken);
+      // Do not store sensitive JWT in localStorage; session is securely persisted in HttpOnly cookie
+      localStorage.removeItem(TOKEN_KEY);
       localStorage.setItem(USER_KEY, JSON.stringify(receivedUser));
       sessionStorage.removeItem(DEMO_MODE_KEY);
 
+      api.setToken(receivedToken);
       setToken(receivedToken);
       setUser(receivedUser);
       setIsDemoMode(false);
@@ -178,12 +244,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const exitDemoMode = () => {
     sessionStorage.removeItem(DEMO_MODE_KEY);
     setIsDemoMode(false);
-    if (!token) {
-      setUser(null);
-    }
+    setUser(null);
+    setToken(null);
+    api.setToken(null);
   };
 
-  const isAuthenticated = Boolean(token && user);
+  const isAuthenticated = Boolean(user);
 
   return (
     <AuthContext.Provider

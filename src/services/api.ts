@@ -14,6 +14,11 @@ const API_BASE_URL =
 
 class ApiClient {
   private onUnauthorizedHandler?: () => void;
+  private inMemoryToken: string | null = null;
+
+  setToken(token: string | null) {
+    this.inMemoryToken = token;
+  }
 
   setUnauthorizedHandler(handler: () => void) {
     this.onUnauthorizedHandler = handler;
@@ -25,9 +30,10 @@ class ApiClient {
     };
 
     const token =
-      typeof localStorage !== 'undefined'
+      this.inMemoryToken ||
+      (typeof localStorage !== 'undefined'
         ? localStorage.getItem('nueways_auth_token')
-        : null;
+        : null);
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
@@ -40,6 +46,7 @@ class ApiClient {
       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         method: 'GET',
         headers: this.getHeaders(),
+        credentials: 'include',
       });
 
       let data: any = {};
@@ -50,7 +57,7 @@ class ApiClient {
       }
 
       if (!response.ok) {
-        if (response.status === 401 && !endpoint.includes('/auth/login')) {
+        if (response.status === 401 && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/me') && !endpoint.includes('/auth/logout')) {
           this.onUnauthorizedHandler?.();
         } else if (response.status === 403 && data?.error === 'PasswordChangeRequired') {
           if (typeof window !== 'undefined') {
@@ -121,6 +128,7 @@ class ApiClient {
         method: 'POST',
         headers: this.getHeaders(),
         body: JSON.stringify(body),
+        credentials: 'include',
       });
 
       let data: any = {};
@@ -131,7 +139,7 @@ class ApiClient {
       }
 
       if (!response.ok) {
-        if (response.status === 401 && !endpoint.includes('/auth/login')) {
+        if (response.status === 401 && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/me') && !endpoint.includes('/auth/logout')) {
           this.onUnauthorizedHandler?.();
         } else if (response.status === 403 && data?.error === 'PasswordChangeRequired') {
           if (typeof window !== 'undefined') {
@@ -187,9 +195,10 @@ class ApiClient {
     try {
       const headers: Record<string, string> = {};
       const token =
-        typeof localStorage !== 'undefined'
+        this.inMemoryToken ||
+        (typeof localStorage !== 'undefined'
           ? localStorage.getItem('nueways_auth_token')
-          : null;
+          : null);
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
@@ -198,6 +207,7 @@ class ApiClient {
         method: 'POST',
         headers,
         body: formData,
+        credentials: 'include',
       });
 
       let data: any = {};
@@ -208,7 +218,7 @@ class ApiClient {
       }
 
       if (!response.ok) {
-        if (response.status === 401 && !endpoint.includes('/auth/login')) {
+        if (response.status === 401 && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/me') && !endpoint.includes('/auth/logout')) {
           this.onUnauthorizedHandler?.();
         } else if (response.status === 403 && data?.error === 'PasswordChangeRequired') {
           if (typeof window !== 'undefined') {
@@ -275,6 +285,7 @@ class ApiClient {
         method: 'PATCH',
         headers: this.getHeaders(),
         body: JSON.stringify(body),
+        credentials: 'include',
       });
 
       let data: any = {};
@@ -285,7 +296,7 @@ class ApiClient {
       }
 
       if (!response.ok) {
-        if (response.status === 401 && !endpoint.includes('/auth/login')) {
+        if (response.status === 401 && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/me') && !endpoint.includes('/auth/logout')) {
           this.onUnauthorizedHandler?.();
         } else if (response.status === 403 && data?.error === 'PasswordChangeRequired') {
           if (typeof window !== 'undefined') {
@@ -352,6 +363,7 @@ class ApiClient {
       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         method: 'DELETE',
         headers: this.getHeaders(),
+        credentials: 'include',
       });
 
       let data: any = {};

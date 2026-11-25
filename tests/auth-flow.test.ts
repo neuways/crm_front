@@ -291,3 +291,149 @@ test('Google Auth: Handles HTTP 503 Unconfigured Google Client ID', async () => 
     globalThis.fetch = originalFetch;
   }
 });
+
+// -----------------------------------------------------------------------------
+// Persistent Login Session Restoration & Logout Tests
+// -----------------------------------------------------------------------------
+test('Auth Service: getMe queries GET /api/v1/auth/me with credentials: include', async () => {
+  const originalFetch = globalThis.fetch;
+  let interceptedUrl = '';
+  let interceptedMethod = '';
+  let interceptedCredentials = '';
+
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    interceptedUrl = String(input);
+    interceptedMethod = init?.method || 'GET';
+    interceptedCredentials = (init?.credentials as string) || '';
+
+    const mockResponse = {
+      success: true,
+      message: 'Session verified.',
+      data: {
+        user: {
+          id: 'emp-admin-1',
+          name: 'Nueways Admin',
+          email: 'admin@nueways.com',
+          role: 'ADMIN',
+          isActive: true,
+          mustChangePassword: false,
+        },
+      },
+    };
+
+    return new Response(JSON.stringify(mockResponse), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const result = await authService.getMe();
+
+    assert.strictEqual(result.success, true, 'getMe call succeeds');
+    assert.ok(interceptedUrl.endsWith('/api/v1/auth/me'), 'Endpoint is /api/v1/auth/me');
+    assert.strictEqual(interceptedMethod, 'GET', 'HTTP method is GET');
+    assert.strictEqual(interceptedCredentials, 'include', 'credentials option is "include" for persistent cookie transmission');
+    assert.strictEqual(result.data?.user.role, 'ADMIN', 'Restores Admin user profile');
+    assert.strictEqual(result.data?.user.id, 'emp-admin-1');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Auth Service: logout queries POST /api/v1/auth/logout with credentials: include', async () => {
+  const originalFetch = globalThis.fetch;
+  let interceptedUrl = '';
+  let interceptedMethod = '';
+  let interceptedCredentials = '';
+
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    interceptedUrl = String(input);
+    interceptedMethod = init?.method || 'GET';
+    interceptedCredentials = (init?.credentials as string) || '';
+
+    return new Response(JSON.stringify({ success: true, message: 'Logged out successfully.' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const result = await authService.logout();
+
+    assert.strictEqual(result.success, true, 'logout call succeeds');
+    assert.ok(interceptedUrl.endsWith('/api/v1/auth/logout'), 'Endpoint is /api/v1/auth/logout');
+    assert.strictEqual(interceptedMethod, 'POST', 'HTTP method is POST');
+    assert.strictEqual(interceptedCredentials, 'include', 'credentials option is "include" to clear cookie on server');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('API Client: In-memory token management and credentials include policy', async () => {
+  const originalFetch = globalThis.fetch;
+  let interceptedHeaders: Record<string, string> = {};
+  let interceptedCredentials = '';
+
+  globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    interceptedHeaders = (init?.headers as Record<string, string>) || {};
+    interceptedCredentials = (init?.credentials as string) || '';
+
+    return new Response(JSON.stringify({ success: true, data: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    // Set in-memory token
+    api.setToken('memory-jwt-token-123');
+    await api.get('/leads');
+
+    assert.strictEqual(interceptedHeaders['Authorization'], 'Bearer memory-jwt-token-123', 'In-memory token attached as Bearer header');
+    assert.strictEqual(interceptedCredentials, 'include', 'credentials: "include" sent on GET request');
+
+    // Clear in-memory token
+    api.setToken(null);
+    await api.get('/leads');
+
+    assert.strictEqual(interceptedHeaders['Authorization'], undefined, 'Bearer token removed when inMemoryToken is set to null');
+    assert.strictEqual(interceptedCredentials, 'include', 'credentials: "include" still preserved for cookie-only requests');
+  } finally {
+    globalThis.fetch = originalFetch;
+    api.setToken(null);
+  }
+});
+
+test('API Interceptor: 401 on /auth/me or /auth/logout does NOT trigger unauthorized callback loop', async () => {
+  const originalFetch = globalThis.fetch;
+  let unauthorizedTriggeredCount = 0;
+
+  api.setUnauthorizedHandler(() => {
+    unauthorizedTriggeredCount++;
+  });
+
+  globalThis.fetch = async (): Promise<Response> => {
+    return new Response(JSON.stringify({ success: false, message: 'No session' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    // 401 on /auth/me should not trigger unauthorized callback
+    await api.get('/auth/me');
+    assert.strictEqual(unauthorizedTriggeredCount, 0, 'No unauthorized callback triggered on /auth/me');
+
+    // 401 on /auth/logout should not trigger unauthorized callback
+    await api.post('/auth/logout', {});
+    assert.strictEqual(unauthorizedTriggeredCount, 0, 'No unauthorized callback triggered on /auth/logout');
+
+    // 401 on normal resource endpoint SHOULD trigger unauthorized callback
+    await api.get('/leads');
+    assert.strictEqual(unauthorizedTriggeredCount, 1, 'Unauthorized callback triggered on regular endpoint 401');
+  } finally {
+    globalThis.fetch = originalFetch;
+    api.setUnauthorizedHandler(() => {});
+  }
+});

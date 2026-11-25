@@ -23,7 +23,7 @@ import { DuplicateDataPage } from '../features/duplicate-data/DuplicateDataPage.
 import { BulkUploadPage } from '../features/bulk-upload/BulkUploadPage.js';
 
 export const AppRoutes: React.FC = () => {
-  const { isAuthenticated, isDemoMode, user } = useAuth();
+  const { isAuthenticated, isDemoMode, user, isLoading } = useAuth();
 
   // Root redirect destination for authenticated employees
   const getRootDestination = () => {
@@ -42,7 +42,14 @@ export const AppRoutes: React.FC = () => {
       <Route
         path="/login"
         element={
-          isAuthenticated ? (
+          isLoading ? (
+            <div className="min-h-screen bg-surface-page flex items-center justify-center p-4">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-8 h-8 border-2 border-brand-primary border-t-transparent rounded-full animate-spin" />
+                <span className="text-xs font-semibold text-content-muted">Verifying session...</span>
+              </div>
+            </div>
+          ) : isAuthenticated ? (
             <Navigate to={getRootDestination()} replace />
           ) : (
             <LoginPage />
