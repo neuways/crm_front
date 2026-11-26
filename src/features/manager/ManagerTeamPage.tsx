@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AuthContext } from '../../context/AuthContext.js';
 import {
   Users,
   RefreshCw,
@@ -37,8 +38,10 @@ export const ManagerTeamPage: React.FC = () => {
   const [isReassignModalOpen, setIsReassignModalOpen] = useState<boolean>(false);
   const [targetAgentForReassignment, setTargetAgentForReassignment] = useState<TeamMemberPerformance | null>(null);
 
-  // Retrieve authenticated manager ID
+  // Retrieve authenticated manager ID (AuthContext preferred, localStorage fallback)
+  const authContext = useContext(AuthContext);
   const currentManagerId = (() => {
+    if (authContext?.user?.id) return authContext.user.id;
     try {
       const stored = localStorage.getItem('nueways_user');
       if (stored) {

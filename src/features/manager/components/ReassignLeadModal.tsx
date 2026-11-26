@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useContext } from 'react';
 import Swal from 'sweetalert2';
 import {
   X,
@@ -12,6 +12,7 @@ import {
 import { Button } from '../../../components/ui/Button.js';
 import { EmptyState } from '../../../components/ui/EmptyState.js';
 import { LoadingState } from '../../../components/ui/LoadingState.js';
+import { AuthContext } from '../../../context/AuthContext.js';
 import { enquiryService } from '../../../services/enquiry.service.js';
 import { TeamMemberPerformance } from '../../../types/enquiry.types.js';
 import { maskPhoneNumber } from '../../../utils/phone.js';
@@ -40,12 +41,20 @@ export interface ReassignLeadModalProps {
   onSuccess: () => void;
 }
 
-type OwnershipFilter = 'ALL' | 'UNASSIGNED' | 'OTHER_AGENTS';
+type OwnershipFilter = 'MANAGER_OWNED' | 'UNASSIGNED';
 
 const getLeadAssigneeId = (item: EligibleLeadItem): string => {
   if (!item.assignedTo) return '';
   if (typeof item.assignedTo === 'string') return item.assignedTo;
   return item.assignedTo.id || item.assignedTo._id || '';
+};
+
+const isLeadHeldBySalesAgent = (item: EligibleLeadItem, managerId: string): boolean => {
+  const ownerId = getLeadAssigneeId(item);
+  if (!ownerId) return false; // Unassigned leads are eligible
+  if (item.assignedTo?.role === 'SALES') return true;
+  if (managerId && ownerId !== managerId) return true;
+  return false;
 };
 
 const normalizeLeadItem = (e: any): EligibleLeadItem => {
@@ -84,10 +93,14 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
   teamMembers,
   onSuccess,
 }) => {
+  const auth = useContext(AuthContext);
+  const effectiveManagerId =
+    (currentManagerId && currentManagerId !== 'me' ? currentManagerId : auth?.user?.id) || '';
+
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
   const [allEligibleLeads, setAllEligibleLeads] = useState<EligibleLeadItem[]>([]);
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
-  const [ownershipFilter, setOwnershipFilter] = useState<OwnershipFilter>('ALL');
+  const [ownershipFilter, setOwnershipFilter] = useState<OwnershipFilter>('MANAGER_OWNED');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isLoadingLeads, setIsLoadingLeads] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -98,7 +111,7 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
     if (!isOpen) return;
     setError(null);
     setSearchQuery('');
-    setOwnershipFilter('ALL');
+    setOwnershipFilter('MANAGER_OWNED');
 
     if (targetAgent?.id) {
       setSelectedAgentId(targetAgent.id);
@@ -110,16 +123,21 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
     }
   }, [targetAgent, teamMembers, isOpen]);
 
-  // Synchronize pre-selected single lead if provided directly
+  // Synchronize pre-selected single lead if provided directly (never allow Sales-held leads)
   useEffect(() => {
     if (lead?.id) {
       const normalized = normalizeLeadItem(lead);
-      setAllEligibleLeads([normalized]);
-      setSelectedLeadIds([normalized.id]);
+      if (!isLeadHeldBySalesAgent(normalized, effectiveManagerId)) {
+        setAllEligibleLeads([normalized]);
+        setSelectedLeadIds([normalized.id]);
+      } else {
+        setAllEligibleLeads([]);
+        setSelectedLeadIds([]);
+      }
     }
-  }, [lead]);
+  }, [lead, effectiveManagerId]);
 
-  // Fetch all active team leads + unassigned leads so manager can assign or reassign from any other owner
+  // Fetch ONLY leads held by the logged-in Manager (assignedTo: currentUser.id) + eligible unassigned leads
   useEffect(() => {
     if (!isOpen || lead?.id) return;
 
@@ -128,14 +146,16 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
       setIsLoadingLeads(true);
       setError(null);
       try {
-        const [activeRes, unassignedRes] = await Promise.all([
+        const [managerRes, unassignedRes] = await Promise.all([
           enquiryService.getEnquiries({
+            assignedTo: effectiveManagerId || 'me',
             status: 'ACTIVE',
             excludeCompletedDeals: true,
             limit: 100,
           }),
           enquiryService.getEnquiries({
             unassigned: true,
+            assignedOnly: false,
             status: 'ACTIVE',
             excludeCompletedDeals: true,
             limit: 100,
@@ -145,17 +165,19 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
         if (!isCancelled) {
           const mergedMap = new Map<string, EligibleLeadItem>();
 
-          if (unassignedRes?.success && unassignedRes.data?.enquiries) {
-            for (const raw of unassignedRes.data.enquiries) {
+          if (managerRes.success && managerRes.data?.enquiries) {
+            for (const raw of managerRes.data.enquiries) {
               const item = normalizeLeadItem(raw);
-              if (item.id) mergedMap.set(item.id, item);
+              if (item.id && !isLeadHeldBySalesAgent(item, effectiveManagerId)) {
+                mergedMap.set(item.id, item);
+              }
             }
           }
 
-          if (activeRes.success && activeRes.data?.enquiries) {
-            for (const raw of activeRes.data.enquiries) {
+          if (unassignedRes?.success && unassignedRes.data?.enquiries) {
+            for (const raw of unassignedRes.data.enquiries) {
               const item = normalizeLeadItem(raw);
-              if (item.id && !mergedMap.has(item.id)) {
+              if (item.id && !getLeadAssigneeId(item) && !mergedMap.has(item.id)) {
                 mergedMap.set(item.id, item);
               }
             }
@@ -181,31 +203,33 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
     return () => {
       isCancelled = true;
     };
-  }, [isOpen, lead]);
+  }, [isOpen, lead, effectiveManagerId]);
 
-  // Exclude leads already assigned to the currently selected target agent
+  // Strictly exclude any lead assigned to a Sales Agent or matching the target agent
   const leadsExcludingTargetAgent = useMemo(() => {
-    if (!selectedAgentId) return allEligibleLeads;
-    return allEligibleLeads.filter((item) => getLeadAssigneeId(item) !== selectedAgentId);
-  }, [allEligibleLeads, selectedAgentId]);
+    return allEligibleLeads.filter((item) => {
+      if (isLeadHeldBySalesAgent(item, effectiveManagerId)) return false;
+      if (selectedAgentId && getLeadAssigneeId(item) === selectedAgentId) return false;
+      return true;
+    });
+  }, [allEligibleLeads, selectedAgentId, effectiveManagerId]);
 
-  // Prune any selected IDs that belong to a newly chosen target agent
+  // Prune any selected IDs no longer in the eligible pool
   useEffect(() => {
-    if (!selectedAgentId) return;
     const validIds = new Set(leadsExcludingTargetAgent.map((l) => l.id));
     setSelectedLeadIds((prev) => prev.filter((id) => validIds.has(id)));
   }, [selectedAgentId, leadsExcludingTargetAgent]);
 
-  // Apply ownership filter pills + search query
+  // Apply ownership filter pills (My Assigned Leads vs Unassigned Only) + search query
   const filteredLeads = useMemo(() => {
     return leadsExcludingTargetAgent.filter((item) => {
       const ownerId = getLeadAssigneeId(item);
+      if (ownershipFilter === 'MANAGER_OWNED' && !ownerId) return false;
       if (ownershipFilter === 'UNASSIGNED' && ownerId) return false;
-      if (ownershipFilter === 'OTHER_AGENTS' && !ownerId) return false;
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const ownerName = (item.assignedTo?.name || 'Unassigned').toLowerCase();
+        const ownerName = (ownerId ? 'Assigned to You (Manager)' : 'Unassigned').toLowerCase();
         return (
           item.name.toLowerCase().includes(q) ||
           Boolean(item.mobile && item.mobile.toLowerCase().includes(q)) ||
@@ -221,8 +245,8 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
 
   const activeTeamMembers = teamMembers.filter((m) => m.isActive);
   const activeTargetAgent = activeTeamMembers.find((m) => m.id === selectedAgentId) || targetAgent;
+  const managerOwnedCount = leadsExcludingTargetAgent.filter((l) => Boolean(getLeadAssigneeId(l))).length;
   const unassignedCount = leadsExcludingTargetAgent.filter((l) => !getLeadAssigneeId(l)).length;
-  const otherAgentsCount = leadsExcludingTargetAgent.length - unassignedCount;
 
   const toggleLeadSelection = (id: string) => {
     setSelectedLeadIds((prev) =>
@@ -320,10 +344,10 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
                 id="reassign-modal-title"
                 className="text-base font-bold text-content-primary"
               >
-                Reassign Lead to {activeTargetAgent?.name || 'Sales Agent'}
+                Assign Lead to {activeTargetAgent?.name || 'Sales Agent'}
               </h2>
               <p className="text-xs text-content-muted">
-                Assign unassigned leads or transfer leads from other team members
+                Assign leads currently held by you (Manager) to your team's sales agents. Leads already assigned to sales agents are excluded.
               </p>
             </div>
           </div>
@@ -366,7 +390,7 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
               ))}
             </select>
             <p className="text-[11px] text-content-muted">
-              Leads already assigned to {activeTargetAgent?.name || 'the selected agent'} are automatically excluded below.
+              Assign leads currently held by you (Manager) to your team's sales agents. Leads already assigned to sales agents are excluded.
             </p>
           </div>
 
@@ -376,14 +400,14 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
               <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => setOwnershipFilter('ALL')}
+                  onClick={() => setOwnershipFilter('MANAGER_OWNED')}
                   className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                    ownershipFilter === 'ALL'
+                    ownershipFilter === 'MANAGER_OWNED'
                       ? 'bg-brand-primary text-white'
                       : 'bg-surface-subtle text-content-secondary hover:bg-slate-200/70'
                   }`}
                 >
-                  All Available ({leadsExcludingTargetAgent.length})
+                  My Assigned Leads ({managerOwnedCount})
                 </button>
                 <button
                   type="button"
@@ -396,17 +420,6 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
                 >
                   Unassigned Only ({unassignedCount})
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setOwnershipFilter('OTHER_AGENTS')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                    ownershipFilter === 'OTHER_AGENTS'
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-surface-subtle text-content-secondary hover:bg-slate-200/70'
-                  }`}
-                >
-                  From Other Agents ({otherAgentsCount})
-                </button>
               </div>
 
               <div className="relative sm:w-56">
@@ -415,7 +428,7 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search lead, phone, owner..."
+                  placeholder="Search lead, phone, project..."
                   className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-edge bg-surface-subtle focus:outline-none focus:ring-1 focus:ring-brand-primary"
                 />
               </div>
@@ -457,8 +470,8 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
                   title="No Eligible Leads Available"
                   description={
                     selectedAgentId
-                      ? `There are no matching unassigned or other-owner leads available to assign to ${activeTargetAgent?.name || 'this agent'}.`
-                      : 'Select a target sales agent above to view transferable leads.'
+                      ? `There are no matching leads held by you${ownershipFilter === 'UNASSIGNED' ? ' in the unassigned queue' : ''} available to assign to ${activeTargetAgent?.name || 'this agent'}.`
+                      : 'Select a target sales agent above to view assignable leads.'
                   }
                 />
               </div>
@@ -467,12 +480,6 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
                 {filteredLeads.map((leadItem) => {
                   const isSelected = selectedLeadIds.includes(leadItem.id);
                   const ownerId = getLeadAssigneeId(leadItem);
-                  const ownerLabel = ownerId
-                    ? leadItem.assignedTo?.name || 'Team Member'
-                    : 'Unassigned';
-                  const isAssignedToCurrentMgr = Boolean(
-                    currentManagerId && ownerId === currentManagerId
-                  );
 
                   return (
                     <label
@@ -532,16 +539,8 @@ export const ReassignLeadModal: React.FC<ReassignLeadModalProps> = ({
                             <span>•</span>
                             <span>
                               Current:{' '}
-                              <strong
-                                className={
-                                  !ownerId
-                                    ? 'text-amber-700'
-                                    : isAssignedToCurrentMgr
-                                    ? 'text-emerald-700'
-                                    : 'text-brand-primary'
-                                }
-                              >
-                                {isAssignedToCurrentMgr ? `${ownerLabel} (Manager)` : ownerLabel}
+                              <strong className={!ownerId ? 'text-amber-700' : 'text-emerald-700'}>
+                                {!ownerId ? 'Unassigned' : 'Assigned to You (Manager)'}
                               </strong>
                             </span>
                           </div>

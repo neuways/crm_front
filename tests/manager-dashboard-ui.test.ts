@@ -186,19 +186,32 @@ test("Manager Lead Assignment Enhancements: ReassignLeadModal, AssignLeadsPage &
   const reassignPath = path.join(__dirname, "../src/features/manager/components/ReassignLeadModal.tsx");
   const reassignContent = fs.readFileSync(reassignPath, "utf-8");
   assert.ok(
-    reassignContent.includes("getLeadAssigneeId(item) !== selectedAgentId"),
-    "ReassignLeadModal filters out leads already assigned to selectedAgentId"
+    reassignContent.includes("if (isLeadHeldBySalesAgent(item, effectiveManagerId)) return false") &&
+      (reassignContent.includes("getLeadAssigneeId(item) === selectedAgentId") ||
+        reassignContent.includes("getLeadAssigneeId(item) !== selectedAgentId")),
+    "ReassignLeadModal strictly excludes sales-agent-held leads and any lead assigned to selectedAgentId"
   );
   assert.ok(
     reassignContent.includes("SELECT LEAD TO REASSIGN (") && reassignContent.includes("AVAILABLE)"),
     "ReassignLeadModal displays dynamic available lead count"
   );
   assert.ok(
-    !reassignContent.includes("Assigned to You"),
-    "ReassignLeadModal replaces misleading hardcoded 'Assigned to You' label"
+    !reassignContent.includes('"Current: Assigned to You"') &&
+      !reassignContent.includes("'Current: Assigned to You'") &&
+      reassignContent.includes("Assigned to You (Manager)"),
+    "ReassignLeadModal shows explicit 'Assigned to You (Manager)' owner label for manager-held leads"
   );
+  assert.ok(reassignContent.includes("My Assigned Leads"), "ReassignLeadModal includes My Assigned Leads filter pill");
   assert.ok(reassignContent.includes("Unassigned Only"), "ReassignLeadModal includes Unassigned Only filter pill");
-  assert.ok(reassignContent.includes("From Other Agents"), "ReassignLeadModal includes From Other Agents filter pill");
+  assert.ok(
+    !reassignContent.includes("From Other Agents"),
+    "ReassignLeadModal removes 'From Other Agents' filter so managers cannot reassign sales-held leads"
+  );
+  assert.ok(
+    reassignContent.includes("isLeadHeldBySalesAgent") &&
+      reassignContent.includes("assignedTo: effectiveManagerId || 'me'"),
+    "ReassignLeadModal queries manager-held leads and strictly excludes leads already held by sales agents"
+  );
   assert.ok(reassignContent.includes('type="checkbox"'), "ReassignLeadModal supports multi-select checkboxes");
   assert.ok(reassignContent.includes("bulkAssignLeads"), "ReassignLeadModal supports bulk assignment");
 
