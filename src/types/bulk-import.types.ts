@@ -3,6 +3,7 @@ export type BulkImportStatus =
   | 'QUEUED'
   | 'PROCESSING'
   | 'COMPLETED'
+  | 'PARTIAL_SUCCESS'
   | 'FAILED'
   | 'CANCELLED';
 

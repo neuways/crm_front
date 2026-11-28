@@ -226,7 +226,7 @@ export const BulkUploadPage: React.FC = () => {
 
   // Assignment Configuration
   const [assignmentMethod, setAssignmentMethod] = useState<'ROUND_ROBIN' | 'MANUAL' | 'SELF'>(
-    user?.role === 'SALES' ? 'SELF' : 'ROUND_ROBIN'
+    user?.role === 'SALES' ? 'SELF' : user?.role === 'MANAGER' ? 'MANUAL' : 'ROUND_ROBIN'
   );
   const [assignedToId, setAssignedToId] = useState<string>('');
   const [availableAgents, setAvailableAgents] = useState<Array<{ id: string; name: string }>>([]);
@@ -237,9 +237,14 @@ export const BulkUploadPage: React.FC = () => {
 
   // Load available sales agents and existing history on mount
   useEffect(() => {
+    if (user?.role === 'MANAGER') {
+      setAssignmentMethod('MANUAL');
+    } else if (user?.role === 'SALES') {
+      setAssignmentMethod('SELF');
+    }
     loadEligibleAgents();
     loadHistory();
-  }, [user?.role]);
+  }, [user?.role, user?.id]);
 
   // Polling active job while in progress
   useEffect(() => {
@@ -251,7 +256,12 @@ export const BulkUploadPage: React.FC = () => {
             const res = await bulkImportClientService.getStatus(currentJob.importId);
             if (res.success && res.data) {
               setCurrentJob(res.data);
-              if (res.data.status === 'COMPLETED' || res.data.status === 'FAILED' || res.data.status === 'CANCELLED') {
+              if (
+                res.data.status === 'COMPLETED' ||
+                res.data.status === 'PARTIAL_SUCCESS' ||
+                res.data.status === 'FAILED' ||
+                res.data.status === 'CANCELLED'
+              ) {
                 setStep('REPORT');
                 loadHistory();
               }
@@ -286,11 +296,19 @@ export const BulkUploadPage: React.FC = () => {
         const res = await enquiryService.getTeamRoster();
         if (res.success && res.data?.agents) {
           const agents = res.data.agents
-            .filter((a) => a.isActive && a.isTeamActive !== false)
+            .filter((a) => a.isAssignedToCurrentManager && a.isActive && a.isTeamActive !== false)
             .map((a) => ({ id: a.id, name: a.name }));
-          setAvailableAgents(agents);
-          if (agents.length > 0 && !assignedToId) {
-            setAssignedToId(agents[0].id);
+          if (agents.length > 0) {
+            setAvailableAgents(agents);
+            if (!assignedToId || !agents.some((a) => a.id === assignedToId)) {
+              setAssignedToId(agents[0].id);
+            }
+          } else if (user?.id) {
+            const selfOption = [{ id: user.id, name: `${user.name || 'Self'} (Self — Manager)` }];
+            setAvailableAgents(selfOption);
+            setAssignedToId(user.id);
+          } else {
+            setAvailableAgents([]);
           }
         }
       }
@@ -887,8 +905,11 @@ export const BulkUploadPage: React.FC = () => {
                       <th className="py-3 px-4">Status</th>
                       <th className="py-3 px-4 text-center">Total Rows</th>
                       <th className="py-3 px-4 text-center">Imported</th>
+                      <th className="py-3 px-4 text-center">Assigned</th>
+                      <th className="py-3 px-4 text-center">Unassigned</th>
                       <th className="py-3 px-4 text-center">Duplicates</th>
                       <th className="py-3 px-4 text-center">Invalid</th>
+                      <th className="py-3 px-4 text-center">Failed</th>
                       <th className="py-3 px-4">Date</th>
                       <th className="py-3 px-4 text-right">Actions</th>
                     </tr>
@@ -905,6 +926,8 @@ export const BulkUploadPage: React.FC = () => {
                             className={`px-2.5 py-1 rounded-full text-[11px] font-semibold inline-block ${
                               job.status === 'COMPLETED'
                                 ? 'bg-emerald-100 text-emerald-800'
+                                : job.status === 'PARTIAL_SUCCESS'
+                                ? 'bg-amber-100 text-amber-800'
                                 : job.status === 'PROCESSING' || job.status === 'QUEUED'
                                 ? 'bg-blue-100 text-blue-800'
                                 : 'bg-rose-100 text-rose-800'
@@ -915,8 +938,11 @@ export const BulkUploadPage: React.FC = () => {
                         </td>
                         <td className="py-3.5 px-4 text-center font-medium">{job.totalRows}</td>
                         <td className="py-3.5 px-4 text-center text-emerald-600 font-bold">{job.importedCount}</td>
+                        <td className="py-3.5 px-4 text-center text-blue-600 font-semibold">{job.assignedCount ?? 0}</td>
+                        <td className="py-3.5 px-4 text-center text-slate-600 font-semibold">{job.unassignedCount ?? 0}</td>
                         <td className="py-3.5 px-4 text-center text-amber-600 font-semibold">{job.duplicateCount}</td>
                         <td className="py-3.5 px-4 text-center text-rose-600 font-semibold">{job.invalidCount}</td>
+                        <td className="py-3.5 px-4 text-center text-purple-600 font-semibold">{job.failedCount ?? 0}</td>
                         <td className="py-3.5 px-4">
                           {job.startedAt ? new Date(job.startedAt).toLocaleDateString() : '—'}
                         </td>
@@ -1106,7 +1132,7 @@ export const BulkUploadPage: React.FC = () => {
                   >
                     {availableAgents.map((a) => (
                       <option key={a.id} value={a.id}>
-                        {a.name} (Sales Team Member)
+                        {a.name.includes('(Self') ? a.name : `${a.name} (Sales Team Member)`}
                       </option>
                     ))}
                   </select>
@@ -1357,10 +1383,12 @@ export const BulkUploadPage: React.FC = () => {
                 className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 ${
                   currentJob.status === 'COMPLETED'
                     ? 'bg-emerald-100 text-emerald-600'
+                    : currentJob.status === 'PARTIAL_SUCCESS'
+                    ? 'bg-amber-100 text-amber-600'
                     : 'bg-rose-100 text-rose-600'
                 }`}
               >
-                {currentJob.status === 'COMPLETED' ? (
+                {currentJob.status === 'COMPLETED' || currentJob.status === 'PARTIAL_SUCCESS' ? (
                   <CheckCircle2 className="w-7 h-7" />
                 ) : (
                   <XCircle className="w-7 h-7" />
@@ -1368,7 +1396,11 @@ export const BulkUploadPage: React.FC = () => {
               </div>
               <div>
                 <h2 className="text-lg sm:text-xl font-bold text-content-primary">
-                  {currentJob.status === 'COMPLETED' ? 'Import Completed Successfully' : 'Import Stopped / Failed'}
+                  {currentJob.status === 'COMPLETED'
+                    ? 'Import Completed Successfully'
+                    : currentJob.status === 'PARTIAL_SUCCESS'
+                    ? 'Import Completed with Partial Errors'
+                    : 'Import Stopped / Failed'}
                 </h2>
                 <p className="text-xs text-content-secondary mt-0.5">
                   Job ID: <span className="font-mono font-medium text-content-primary">{currentJob.importId}</span> &bull;{' '}
@@ -1397,17 +1429,32 @@ export const BulkUploadPage: React.FC = () => {
             {/* Imported */}
             <button
               type="button"
-              onClick={() => navigate('/leads?tab=active')}
+              onClick={() =>
+                navigate(
+                  currentJob.unassignedCount > 0 && currentJob.assignedCount === 0
+                    ? '/leads?tab=unassigned'
+                    : '/leads?tab=active'
+                )
+              }
               className="p-4 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200 rounded-2xl shadow-sm text-left transition cursor-pointer group flex flex-col justify-between"
-              title="Click to view Active Pipeline"
+              title={
+                currentJob.unassignedCount > 0 && currentJob.assignedCount === 0
+                  ? 'Click to view Unassigned Queue'
+                  : 'Click to view Active Pipeline'
+              }
             >
               <div className="flex items-center justify-between w-full">
                 <span className="text-xs text-emerald-800 font-semibold">Imported</span>
                 <ExternalLink className="w-3.5 h-3.5 text-emerald-600 opacity-0 group-hover:opacity-100 transition-opacity" />
               </div>
               <p className="text-2xl font-bold text-emerald-900 mt-1">{currentJob.importedCount}</p>
+              <span className="text-[10px] text-emerald-800/80 font-medium mt-0.5">
+                Assigned: {currentJob.assignedCount} &bull; Unassigned: {currentJob.unassignedCount} &bull; Failed: {currentJob.failedCount ?? 0}
+              </span>
               <span className="text-[10px] text-emerald-700 font-medium mt-1 flex items-center gap-0.5 group-hover:underline">
-                View in Pipeline &rarr;
+                {currentJob.unassignedCount > 0 && currentJob.assignedCount === 0
+                  ? 'View in Unassigned Queue'
+                  : 'View in Pipeline'} &rarr;
               </span>
             </button>
 
